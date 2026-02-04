@@ -3,133 +3,127 @@ using invoice_v1.src.Infrastructure.Repositories;
 
 namespace invoice_v1.src.Application.BackgroundServices
 {
-    // Background service that periodically checks for unprocessed FileChangeLogs
-    // and creates corresponding JobQueue entries.
-    // This service owns the job creation logic.
     public class JobCreationService : BackgroundService
     {
-        private readonly IServiceProvider _serviceProvider;
-        private readonly ILogger<JobCreationService> _logger;
-        private readonly TimeSpan _interval;
-        private const int BatchSize = 50;
+        private readonly ILogger<JobCreationService> logger;
+        private readonly IServiceProvider serviceProvider;
+        private readonly TimeSpan interval;
 
         public JobCreationService(
+            ILogger<JobCreationService> logger,
             IServiceProvider serviceProvider,
-            IConfiguration configuration,
-            ILogger<JobCreationService> logger)
+            IConfiguration configuration)
         {
-            _serviceProvider = serviceProvider;
-            _logger = logger;
+            this.logger = logger;
+            this.serviceProvider = serviceProvider;
 
-            // Read interval from configuration (default: 30 seconds)
-            var intervalSeconds = configuration.GetValue<int>("JobCreation:IntervalSeconds", 30);
-            _interval = TimeSpan.FromSeconds(intervalSeconds);
+            // Reduced from 30s to 5s for faster response
+            var intervalSeconds = configuration.GetValue<int>("JobCreationIntervalSeconds", 5);
+            this.interval = TimeSpan.FromSeconds(intervalSeconds);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("Job Creation Service starting. Interval: {Interval}", _interval);
-
-            // Wait a bit before first run to let the app fully initialize
-            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-
-            using var timer = new PeriodicTimer(_interval);
+            logger.LogInformation("Job Creation Service starting. Interval: {Interval}", interval);
 
             try
             {
-                // Run first check immediately
-                await ProcessUnprocessedLogsAsync(stoppingToken);
+                using var timer = new PeriodicTimer(interval);
 
-                // Then run on interval
+                // Run immediately on startup
+                await DoWork(stoppingToken);
+
                 while (await timer.WaitForNextTickAsync(stoppingToken))
                 {
                     try
                     {
-                        await ProcessUnprocessedLogsAsync(stoppingToken);
+                        await DoWork(stoppingToken);
                     }
                     catch (OperationCanceledException)
                     {
-                        _logger.LogInformation("Job creation operation cancelled");
+                        logger.LogInformation("Job creation operation was cancelled");
                         break;
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error during job creation cycle");
+                        logger.LogError(ex, "Error during job creation cycle");
                     }
                 }
             }
             catch (OperationCanceledException)
             {
-                _logger.LogInformation("Job Creation Service stopping gracefully");
+                logger.LogInformation("Job Creation Service stopping gracefully");
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, "Job Creation Service encountered a fatal error");
+                logger.LogCritical(ex, "Job Creation Service encountered a fatal error");
                 throw;
             }
 
-            _logger.LogInformation("Job Creation Service stopped");
+            logger.LogInformation("Job Creation Service stopped");
         }
 
-        private async Task ProcessUnprocessedLogsAsync(CancellationToken cancellationToken)
+        private async Task DoWork(CancellationToken cancellationToken)
         {
-            using var scope = _serviceProvider.CreateScope();
-            var jobRepository = scope.ServiceProvider.GetRequiredService<IJobRepository>();
-            var jobService = scope.ServiceProvider.GetRequiredService<IJobService>();
-
-            var unprocessedLogs = await jobRepository.GetUnprocessedFileChangeLogsAsync(BatchSize);
-
-            if (unprocessedLogs.Count == 0)
+            try
             {
-                _logger.LogDebug("No unprocessed file change logs found");
-                return;
+                using var scope = serviceProvider.CreateScope();
+                var fileChangeLogRepository = scope.ServiceProvider
+                    .GetRequiredService<IFileChangeLogRepository>();
+                var jobService = scope.ServiceProvider
+                    .GetRequiredService<IJobService>();
+
+                var logs = await fileChangeLogRepository.GetUnprocessedAsync(batchSize: 50);
+
+                if (logs.Count == 0)
+                {
+                    logger.LogDebug("No unprocessed file change logs");
+                    return;
+                }
+
+                logger.LogInformation("Processing {Count} unprocessed file change logs", logs.Count);
+
+                int successCount = 0;
+                int errorCount = 0;
+
+                foreach (var log in logs)
+                {
+                    try
+                    {
+                        var job = await jobService.CreateJobFromLogAsync(log);
+
+                        // Mark log as processed to prevent duplicate jobs
+                        await fileChangeLogRepository.MarkAsProcessedAsync(log.Id);
+                        successCount++;
+
+                        logger.LogInformation(
+                            "Created job {JobId} from log {LogId} for file {FileId}",
+                            job.Id, log.Id, log.FileId);
+                    }
+                    catch (Exception ex)
+                    {
+                        errorCount++;
+                        logger.LogError(ex,
+                            "Error creating job from log {LogId} (file: {FileId})",
+                            log.Id, log.FileId);
+                    }
+                }
+
+                logger.LogInformation(
+                    "Job creation cycle completed. Success: {SuccessCount}, Errors: {ErrorCount}",
+                    successCount, errorCount);
             }
-
-            _logger.LogInformation("Processing {Count} unprocessed file change logs", unprocessedLogs.Count);
-
-            var successCount = 0;
-            var errorCount = 0;
-
-            foreach (var log in unprocessedLogs)
+            catch (Exception ex)
             {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    break;
-                }
-
-                try
-                {
-                    var job = await jobService.CreateJobFromLogAsync(log);
-                    successCount++;
-
-                    _logger.LogInformation(
-                        "Created job {JobId} from log {LogId} for file {FileId}",
-                        job.Id,
-                        log.Id,
-                        log.FileId);
-                }
-                catch (Exception ex)
-                {
-                    errorCount++;
-                    _logger.LogError(
-                        ex,
-                        "Failed to create job from log {LogId} for file {FileId}",
-                        log.Id,
-                        log.FileId);
-                }
+                logger.LogError(ex, "Error in job creation cycle");
             }
-
-            _logger.LogInformation(
-                "Job creation cycle completed. Success: {SuccessCount}, Errors: {ErrorCount}",
-                successCount,
-                errorCount);
         }
 
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
-            _logger.LogInformation("Job Creation Service stopping...");
+            logger.LogInformation("Job Creation Service stopping...");
             await base.StopAsync(cancellationToken);
-            _logger.LogInformation("Job Creation Service stopped gracefully");
+            logger.LogInformation("Job Creation Service stopped gracefully");
         }
     }
 }

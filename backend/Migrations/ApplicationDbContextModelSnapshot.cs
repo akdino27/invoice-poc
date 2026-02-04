@@ -24,11 +24,8 @@ namespace invoice_v1.Migrations
 
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.FileChangeLog", b =>
                 {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("ChangeType")
                         .IsRequired()
@@ -83,9 +80,7 @@ namespace invoice_v1.Migrations
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.InvalidInvoice", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier")
-                        .HasDefaultValueSql("NEWID()");
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -113,7 +108,6 @@ namespace invoice_v1.Migrations
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.Invoice", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<decimal?>("BalanceDue")
@@ -230,7 +224,6 @@ namespace invoice_v1.Migrations
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.InvoiceLine", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<decimal>("Amount")
@@ -287,7 +280,6 @@ namespace invoice_v1.Migrations
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.JobQueue", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTime>("CreatedAt")
@@ -346,7 +338,6 @@ namespace invoice_v1.Migrations
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.Product", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("Category")
