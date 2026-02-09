@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using System;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace invoice_v1.src.Domain.Entities
@@ -6,13 +7,13 @@ namespace invoice_v1.src.Domain.Entities
     public class InvoiceLine
     {
         [Key]
-        public Guid Id { get; set; }
+        public Guid Id { get; set; } = Guid.NewGuid();
 
         [Required]
         public Guid InvoiceId { get; set; }
 
         [ForeignKey(nameof(InvoiceId))]
-        public Invoice Invoice { get; set; } = null!;  
+        public Invoice Invoice { get; set; } = null!;
 
         [Required]
         public Guid ProductGuid { get; set; }
@@ -32,15 +33,12 @@ namespace invoice_v1.src.Domain.Entities
         public string? Category { get; set; }
 
         [Required]
-        [Column(TypeName = "decimal(18,4)")]
         public decimal Quantity { get; set; }
 
         [Required]
-        [Column(TypeName = "decimal(18,2)")]
         public decimal UnitRate { get; set; }
 
         [Required]
-        [Column(TypeName = "decimal(18,2)")]
         public decimal Amount { get; set; }
 
         [Required]

@@ -1,6 +1,6 @@
 ﻿using System;
 using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json;
 
 namespace invoice_v1.src.Domain.Entities
 {
@@ -11,7 +11,7 @@ namespace invoice_v1.src.Domain.Entities
     public class JobQueue
     {
         [Key]
-        public Guid Id { get; set; }
+        public Guid Id { get; set; } = Guid.NewGuid();
 
         [Required]
         [MaxLength(50)]
@@ -19,11 +19,10 @@ namespace invoice_v1.src.Domain.Entities
 
         /// <summary>
         /// JSON payload containing fileId, originalName, mimeType, etc.
-        /// Schema defined in contracts/job_payload_schema.json
+        /// Stored as jsonb in PostgreSQL.
         /// </summary>
         [Required]
-        [Column(TypeName = "nvarchar(max)")]
-        public string PayloadJson { get; set; } = string.Empty;
+        public JsonDocument PayloadJson { get; set; } = JsonDocument.Parse("{}");
 
         [Required]
         [MaxLength(20)]
@@ -38,8 +37,11 @@ namespace invoice_v1.src.Domain.Entities
 
         public DateTime? NextRetryAt { get; set; }
 
-        [Column(TypeName = "nvarchar(max)")]
-        public string? ErrorMessage { get; set; }
+        /// <summary>
+        /// Structured error information (exception, stack trace, worker id, etc.)
+        /// Stored as jsonb.
+        /// </summary>
+        public JsonDocument? ErrorMessage { get; set; }
 
         [Required]
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

@@ -1,12 +1,14 @@
-﻿using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
+﻿using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
 
 namespace invoice_v1.src.Domain.Entities
 {
     public class Invoice
     {
         [Key]
-        public Guid Id { get; set; }
+        public Guid Id { get; set; } = Guid.NewGuid();
 
         [MaxLength(100)]
         public string? InvoiceNumber { get; set; }
@@ -38,32 +40,18 @@ namespace invoice_v1.src.Domain.Entities
         public string? ShipMode { get; set; }
 
         // Financial Details
-        [Column(TypeName = "decimal(18,2)")]
         public decimal? Subtotal { get; set; }
-
-        [Column(TypeName = "decimal(18,2)")]
         public decimal? DiscountPercentage { get; set; }
-
-        [Column(TypeName = "decimal(18,2)")]
         public decimal? DiscountAmount { get; set; }
-
-        [Column(TypeName = "decimal(18,2)")]
         public decimal? ShippingCost { get; set; }
-
-        [Column(TypeName = "decimal(18,2)")]
         public decimal? TotalAmount { get; set; }
-
-        [Column(TypeName = "decimal(18,2)")]
         public decimal? BalanceDue { get; set; }
 
         [MaxLength(10)]
         public string? Currency { get; set; }
 
-        // Notes and Terms
-        [Column(TypeName = "nvarchar(max)")]
+        // Notes and Terms (simple text)
         public string? Notes { get; set; }
-
-        [Column(TypeName = "nvarchar(max)")]
         public string? Terms { get; set; }
 
         // Drive file reference
@@ -74,8 +62,11 @@ namespace invoice_v1.src.Domain.Entities
         [MaxLength(500)]
         public string? OriginalFileName { get; set; }
 
-        [Column(TypeName = "nvarchar(max)")]
-        public string? ExtractedDataJson { get; set; }
+        /// <summary>
+        /// Raw extracted / OCR / ML data for the invoice.
+        /// Stored as jsonb in PostgreSQL.
+        /// </summary>
+        public JsonDocument? ExtractedDataJson { get; set; }
 
         [Required]
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

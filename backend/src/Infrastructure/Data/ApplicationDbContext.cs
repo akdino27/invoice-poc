@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace invoice_v1.src.Infrastructure.Data
 {
-    // Manages all entities and relationships
     public class ApplicationDbContext : DbContext
     {
         public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
@@ -11,13 +10,12 @@ namespace invoice_v1.src.Infrastructure.Data
         {
         }
 
-        // DbSets
-        public DbSet<FileChangeLog> FileChangeLogs { get; set; } = null!;
-        public DbSet<JobQueue> JobQueues { get; set; } = null!;
-        public DbSet<Product> Products { get; set; } = null!;
-        public DbSet<Invoice> Invoices { get; set; } = null!;
-        public DbSet<InvoiceLine> InvoiceLines { get; set; } = null!;
-        public DbSet<InvalidInvoice> InvalidInvoices { get; set; } = null!;
+        public DbSet<FileChangeLog> FileChangeLogs => Set<FileChangeLog>();
+        public DbSet<JobQueue> JobQueues => Set<JobQueue>();
+        public DbSet<Product> Products => Set<Product>();
+        public DbSet<Invoice> Invoices => Set<Invoice>();
+        public DbSet<InvoiceLine> InvoiceLines => Set<InvoiceLine>();
+        public DbSet<InvalidInvoice> InvalidInvoices => Set<InvalidInvoice>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -31,233 +29,196 @@ namespace invoice_v1.src.Infrastructure.Data
             ConfigureInvalidInvoice(modelBuilder);
         }
 
+        // -------------------------
+        // FileChangeLog
+        // -------------------------
         private static void ConfigureFileChangeLog(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<FileChangeLog>(entity =>
             {
+                entity.ToTable("file_change_logs");
+
                 entity.HasKey(e => e.Id);
 
-                entity.Property(e => e.ChangeType)
-                    .IsRequired()
-                    .HasMaxLength(50);
+                entity.Property(e => e.DetectedAt).HasColumnType("timestamptz");
+                entity.Property(e => e.GoogleDriveModifiedTime).HasColumnType("timestamptz");
+                entity.Property(e => e.ProcessedAt).HasColumnType("timestamptz");
 
-                entity.Property(e => e.DetectedAt)
-                    .IsRequired();
-
-                // Index for polling unprocessed logs
                 entity.HasIndex(e => new { e.Processed, e.DetectedAt })
-                    .HasDatabaseName("IX_FileChangeLogs_Processed_DetectedAt");
+                      .HasDatabaseName("ix_file_change_logs_processed_detected_at");
 
-                // Index for FileId lookups
                 entity.HasIndex(e => e.FileId)
-                    .HasDatabaseName("IX_FileChangeLogs_FileId");
+                      .HasDatabaseName("ix_file_change_logs_file_id");
 
                 entity.HasIndex(e => e.ChangeType)
-                    .HasDatabaseName("IX_FileChangeLogs_ChangeType");
+                      .HasDatabaseName("ix_file_change_logs_change_type");
             });
         }
 
+        // -------------------------
+        // JobQueue
+        // -------------------------
         private static void ConfigureJobQueue(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<JobQueue>(entity =>
             {
+                entity.ToTable("job_queues");
+
                 entity.HasKey(e => e.Id);
 
-                entity.Property(e => e.JobType)
-                    .IsRequired()
-                    .HasMaxLength(100);
+                entity.Property(e => e.PayloadJson).HasColumnType("jsonb");
+                entity.Property(e => e.ErrorMessage).HasColumnType("jsonb");
 
-                entity.Property(e => e.Status)
-                    .IsRequired()
-                    .HasMaxLength(50);
+                entity.Property(e => e.CreatedAt).HasColumnType("timestamptz");
+                entity.Property(e => e.UpdatedAt).HasColumnType("timestamptz");
+                entity.Property(e => e.NextRetryAt).HasColumnType("timestamptz");
+                entity.Property(e => e.LockedAt).HasColumnType("timestamptz");
 
-                entity.Property(e => e.PayloadJson)
-                    .IsRequired()
-                    .HasColumnType("nvarchar(max)");
-
-                // Critical index for worker polling
                 entity.HasIndex(e => new { e.Status, e.NextRetryAt })
-                    .HasDatabaseName("IX_JobQueues_Status_NextRetryAt");
+                      .HasDatabaseName("ix_job_queues_status_next_retry_at");
 
-                // Index for job lookup by status
-                entity.HasIndex(e => e.Status)
-                    .HasDatabaseName("IX_JobQueues_Status");
+                entity.HasIndex(e => new { e.Status, e.LockedAt })
+                      .HasDatabaseName("ix_job_queues_status_locked_at");
 
-                // Index for locked jobs monitoring
-                entity.HasIndex(e => new { e.LockedBy, e.LockedAt })
-                    .HasDatabaseName("IX_JobQueues_LockedBy_LockedAt");
-
-                // Index for job history queries
                 entity.HasIndex(e => e.CreatedAt)
-                    .HasDatabaseName("IX_JobQueues_CreatedAt");
+                      .HasDatabaseName("ix_job_queues_created_at");
+
+                // GIN index added via migration SQL
+                entity.HasIndex(e => e.PayloadJson)
+                      .HasDatabaseName("ix_job_queues_payload_json");
             });
         }
 
+        // -------------------------
+        // Product
+        // -------------------------
         private static void ConfigureProduct(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<Product>(entity =>
             {
+                entity.ToTable("products");
+
                 entity.HasKey(e => e.Id);
 
-                entity.Property(e => e.ProductId)
-                    .IsRequired()
-                    .HasMaxLength(100);
+                entity.Property(e => e.DefaultUnitRate).HasColumnType("numeric(18,2)");
+                entity.Property(e => e.TotalQuantitySold).HasColumnType("numeric(18,4)");
+                entity.Property(e => e.TotalRevenue).HasColumnType("numeric(18,2)");
 
-                entity.Property(e => e.ProductName)
-                    .IsRequired()
-                    .HasMaxLength(500);
+                entity.Property(e => e.LastSoldDate).HasColumnType("timestamptz");
+                entity.Property(e => e.CreatedAt).HasColumnType("timestamptz");
+                entity.Property(e => e.UpdatedAt).HasColumnType("timestamptz");
 
-                // Unique constraint on business ProductId
                 entity.HasIndex(e => e.ProductId)
-                    .IsUnique()
-                    .HasDatabaseName("IX_Products_ProductId_Unique");
+                      .IsUnique()
+                      .HasDatabaseName("ix_products_product_id_unique");
 
-                // Index for category-based queries
                 entity.HasIndex(e => e.PrimaryCategory)
-                    .HasDatabaseName("IX_Products_PrimaryCategory");
+                      .HasDatabaseName("ix_products_primary_category");
 
                 entity.HasIndex(e => e.Category)
-                    .HasDatabaseName("IX_Products_Category");
+                      .HasDatabaseName("ix_products_category");
 
-                // Index for trending products (sorted by total quantity sold)
-                entity.HasIndex(e => e.TotalQuantitySold)
-                    .HasDatabaseName("IX_Products_TotalQuantitySold");
-
-                // Index for revenue analysis
                 entity.HasIndex(e => e.TotalRevenue)
-                    .HasDatabaseName("IX_Products_TotalRevenue");
+                      .HasDatabaseName("ix_products_total_revenue");
 
-                // Index for last sold date (find stale products)
                 entity.HasIndex(e => e.LastSoldDate)
-                    .HasDatabaseName("IX_Products_LastSoldDate");
+                      .HasDatabaseName("ix_products_last_sold_date");
             });
         }
 
+        // -------------------------
+        // Invoice
+        // -------------------------
         private static void ConfigureInvoice(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<Invoice>(entity =>
             {
+                entity.ToTable("invoices");
+
                 entity.HasKey(e => e.Id);
 
-                entity.Property(e => e.DriveFileId)
-                    .IsRequired()
-                    .HasMaxLength(100);
+                entity.Property(e => e.InvoiceDate).HasColumnType("timestamptz");
+                entity.Property(e => e.CreatedAt).HasColumnType("timestamptz");
+                entity.Property(e => e.UpdatedAt).HasColumnType("timestamptz");
 
-                // Unique constraint on DriveFileId (one invoice per file)
+                entity.Property(e => e.Subtotal).HasColumnType("numeric(18,2)");
+                entity.Property(e => e.DiscountPercentage).HasColumnType("numeric(18,2)");
+                entity.Property(e => e.DiscountAmount).HasColumnType("numeric(18,2)");
+                entity.Property(e => e.ShippingCost).HasColumnType("numeric(18,2)");
+                entity.Property(e => e.TotalAmount).HasColumnType("numeric(18,2)");
+                entity.Property(e => e.BalanceDue).HasColumnType("numeric(18,2)");
+
+                entity.Property(e => e.ExtractedDataJson).HasColumnType("jsonb");
+
                 entity.HasIndex(e => e.DriveFileId)
-                    .IsUnique()
-                    .HasDatabaseName("IX_Invoices_DriveFileId_Unique");
+                      .IsUnique()
+                      .HasDatabaseName("ix_invoices_drive_file_id_unique");
 
-                entity.HasIndex(e => e.InvoiceNumber)
-                    .HasDatabaseName("IX_Invoices_InvoiceNumber");
-
-                entity.HasIndex(e => e.OrderId)
-                    .HasDatabaseName("IX_Invoices_OrderId");
-
-                // Critical for time-series analytics
                 entity.HasIndex(e => e.InvoiceDate)
-                    .HasDatabaseName("IX_Invoices_InvoiceDate");
+                      .HasDatabaseName("ix_invoices_invoice_date");
 
-                // For vendor analysis
-                entity.HasIndex(e => e.VendorName)
-                    .HasDatabaseName("IX_Invoices_VendorName");
-
-                // For customer analysis
-                entity.HasIndex(e => e.BillToName)
-                    .HasDatabaseName("IX_Invoices_BillToName");
-
-                // Composite index for date range queries with amount
                 entity.HasIndex(e => new { e.InvoiceDate, e.TotalAmount })
-                    .HasDatabaseName("IX_Invoices_Date_Amount");
-
-                // Index for created date queries
-                entity.HasIndex(e => e.CreatedAt)
-                    .HasDatabaseName("IX_Invoices_CreatedAt");
+                      .HasDatabaseName("ix_invoices_date_amount");
             });
         }
 
+        // -------------------------
+        // InvoiceLine
+        // -------------------------
         private static void ConfigureInvoiceLine(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<InvoiceLine>(entity =>
             {
+                entity.ToTable("invoice_lines");
+
                 entity.HasKey(e => e.Id);
 
-                entity.Property(e => e.ProductId)
-                    .IsRequired()
-                    .HasMaxLength(100);
+                entity.Property(e => e.Quantity).HasColumnType("numeric(18,4)");
+                entity.Property(e => e.UnitRate).HasColumnType("numeric(18,2)");
+                entity.Property(e => e.Amount).HasColumnType("numeric(18,2)");
+                entity.Property(e => e.CreatedAt).HasColumnType("timestamptz");
 
-                entity.Property(e => e.ProductName)
-                    .IsRequired()
-                    .HasMaxLength(500);
-
-                entity.Property(e => e.Quantity)
-                    .IsRequired()
-                    .HasColumnType("decimal(18,4)");
-
-                entity.Property(e => e.UnitRate)
-                    .IsRequired()
-                    .HasColumnType("decimal(18,2)");
-
-                entity.Property(e => e.Amount)
-                    .IsRequired()
-                    .HasColumnType("decimal(18,2)");
-
-                // Foreign key to Invoice (cascade delete)
                 entity.HasOne(e => e.Invoice)
-                    .WithMany(i => i.LineItems)
-                    .HasForeignKey(e => e.InvoiceId)
-                    .OnDelete(DeleteBehavior.Cascade);
+                      .WithMany(i => i.LineItems)
+                      .HasForeignKey(e => e.InvoiceId)
+                      .OnDelete(DeleteBehavior.Cascade);
 
-                // Foreign key to Product (restrict delete)
                 entity.HasOne(e => e.Product)
-                    .WithMany(p => p.InvoiceLines)
-                    .HasForeignKey(e => e.ProductGuid)
-                    .OnDelete(DeleteBehavior.Restrict);
+                      .WithMany(p => p.InvoiceLines)
+                      .HasForeignKey(e => e.ProductGuid)
+                      .OnDelete(DeleteBehavior.Restrict);
 
-                // Index for product-based queries
                 entity.HasIndex(e => e.ProductGuid)
-                    .HasDatabaseName("IX_InvoiceLines_ProductGuid");
+                      .HasDatabaseName("ix_invoice_lines_product_guid");
 
-                // Index for ProductId lookup (denormalized)
-                entity.HasIndex(e => e.ProductId)
-                    .HasDatabaseName("IX_InvoiceLines_ProductId");
-
-                // Index for category analytics
-                entity.HasIndex(e => e.Category)
-                    .HasDatabaseName("IX_InvoiceLines_Category");
-
-                // Composite index for product sales over time
                 entity.HasIndex(e => new { e.ProductGuid, e.InvoiceId })
-                    .HasDatabaseName("IX_InvoiceLines_Product_Invoice");
+                      .HasDatabaseName("ix_invoice_lines_product_invoice");
             });
         }
 
+        // -------------------------
+        // InvalidInvoice
+        // -------------------------
         private static void ConfigureInvalidInvoice(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<InvalidInvoice>(entity =>
             {
-                entity.ToTable("InvalidInvoices");
+                entity.ToTable("invalid_invoices");
 
                 entity.HasKey(e => e.Id);
 
                 entity.Property(e => e.Id)
-                    .HasDefaultValueSql("NEWID()");
+                      .HasDefaultValueSql("gen_random_uuid()");
+
+                entity.Property(e => e.Reason).HasColumnType("jsonb");
+                entity.Property(e => e.CreatedAt).HasColumnType("timestamptz");
 
                 entity.HasIndex(e => e.FileId)
-                    .HasDatabaseName("IX_InvalidInvoices_FileId");
+                      .HasDatabaseName("ix_invalid_invoices_file_id");
 
-                entity.Property(e => e.FileName)
-                    .HasMaxLength(500);
-
-                entity.Property(e => e.FileId)
-                    .HasMaxLength(100);
-
-                entity.Property(e => e.Reason)
-                    .IsRequired()
-                    .HasColumnType("nvarchar(max)");
-
-                entity.Property(e => e.CreatedAt)
-                    .IsRequired();
+                // GIN index via migration SQL
+                entity.HasIndex(e => e.Reason)
+                      .HasDatabaseName("ix_invalid_invoices_reason");
             });
         }
     }

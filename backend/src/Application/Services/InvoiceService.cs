@@ -33,7 +33,13 @@ namespace invoice_v1.src.Application.Services
                 throw new InvalidOperationException($"Job {jobId} not found");
             }
 
-            var payload = JsonSerializer.Deserialize<JsonElement>(job.PayloadJson);
+            if (job.PayloadJson == null)
+            {
+                throw new InvalidOperationException("Job payload is missing");
+            }
+
+            var payload = job.PayloadJson.RootElement;
+
             var fileId = payload.GetProperty("fileId").GetString()
                 ?? throw new InvalidOperationException("FileId not found in job payload");
             var fileName = GetStringProperty(payload, "originalName");
@@ -128,7 +134,8 @@ namespace invoice_v1.src.Application.Services
             }
 
             // Store full extracted JSON
-            invoice.ExtractedDataJson = resultJson;
+            invoice.ExtractedDataJson = JsonDocument.Parse(resultJson);
+
 
             //  PROCESS LINE ITEMS 
             if (!extractedData.TryGetProperty("LineItems", out var lineItemsElement)
@@ -371,17 +378,14 @@ namespace invoice_v1.src.Application.Services
         private async Task<InvoiceDto> MapToDtoAsync(Invoice invoice)
         {
             object? extractedData = null;
-            if (!string.IsNullOrWhiteSpace(invoice.ExtractedDataJson))
+
+            if (invoice.ExtractedDataJson != null)
             {
-                try
-                {
-                    extractedData = JsonSerializer.Deserialize<object>(invoice.ExtractedDataJson);
-                }
-                catch
-                {
-                    extractedData = invoice.ExtractedDataJson;
-                }
+                extractedData = JsonSerializer.Deserialize<object>(
+                    invoice.ExtractedDataJson.RootElement.GetRawText()
+                );
             }
+
 
             return new InvoiceDto
             {

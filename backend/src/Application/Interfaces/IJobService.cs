@@ -1,6 +1,8 @@
-﻿using invoice_v1.src.Domain.Entities;
-using invoice_v1.src.Application.DTOs;
+﻿using invoice_v1.src.Application.DTOs;
+using invoice_v1.src.Domain.Entities;
 using invoice_v1.src.Domain.Enums;
+using System.Text.Json;
+
 
 namespace invoice_v1.src.Application.Interfaces
 {
@@ -12,8 +14,9 @@ namespace invoice_v1.src.Application.Interfaces
         Task<(List<JobDto> Jobs, int Total)> GetJobsAsync(JobStatus? status, int page, int pageSize);
         Task MarkProcessingAsync(Guid jobId, string workerId);
         Task MarkCompletedAsync(Guid jobId, object result);
-        Task MarkInvalidAsync(Guid jobId, string reason);
-        Task MarkFailedAsync(Guid jobId, string errorMessage);
-        Task RequeueJobAsync(Guid jobId);
+        Task MarkInvalidAsync(Guid jobId, JsonDocument reason);
+        Task MarkFailedAsync(Guid jobId, JsonDocument error);
+
+    Task RequeueJobAsync(Guid jobId);
     }
 }

@@ -44,7 +44,7 @@ namespace invoice_v1.src.Application.Services
             {
                 Id = Guid.NewGuid(),
                 JobType = nameof(JobType.INVOICE_EXTRACTION),
-                PayloadJson = JsonSerializer.Serialize(payload),
+                PayloadJson = JsonDocument.Parse(JsonSerializer.Serialize(payload)),
                 Status = nameof(JobStatus.PENDING),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -126,32 +126,25 @@ namespace invoice_v1.src.Application.Services
             _logger.LogInformation("Job {JobId} marked as COMPLETED", jobId);
         }
 
-        public async Task MarkInvalidAsync(Guid jobId, string reason)
+        public async Task MarkInvalidAsync(Guid jobId, JsonDocument reason)
         {
-            var job = await _jobRepository.GetByIdAsync(jobId);
-            if (job == null)
-            {
-                throw new InvalidOperationException($"Job {jobId} not found");
-            }
+            var job = await _jobRepository.GetByIdAsync(jobId)
+                ?? throw new InvalidOperationException($"Job {jobId} not found");
 
             job.Status = nameof(JobStatus.INVALID);
             job.ErrorMessage = reason;
             job.UpdatedAt = DateTime.UtcNow;
 
             await _jobRepository.UpdateJobAsync(job);
-
-            _logger.LogWarning("Job {JobId} marked as INVALID: {Reason}", jobId, reason);
         }
 
-        public async Task MarkFailedAsync(Guid jobId, string errorMessage)
-        {
-            var job = await _jobRepository.GetByIdAsync(jobId);
-            if (job == null)
-            {
-                throw new InvalidOperationException($"Job {jobId} not found");
-            }
 
-            job.ErrorMessage = errorMessage;
+        public async Task MarkFailedAsync(Guid jobId, JsonDocument error)
+        {
+            var job = await _jobRepository.GetByIdAsync(jobId)
+                ?? throw new InvalidOperationException($"Job {jobId} not found");
+
+            job.ErrorMessage = error;
             job.RetryCount++;
 
             // Exponential backoff for retries
@@ -218,7 +211,10 @@ namespace invoice_v1.src.Application.Services
             object? payload = null;
             try
             {
-                payload = JsonSerializer.Deserialize<object>(job.PayloadJson);
+                payload = JsonSerializer.Deserialize<object>(
+                    job.PayloadJson.RootElement.GetRawText()
+                );
+
             }
             catch
             {
@@ -235,7 +231,9 @@ namespace invoice_v1.src.Application.Services
                 LockedBy = job.LockedBy,
                 LockedAt = job.LockedAt,
                 NextRetryAt = job.NextRetryAt,
-                ErrorMessage = job.ErrorMessage,
+                ErrorMessage = job.ErrorMessage != null
+                ? job.ErrorMessage.RootElement.GetRawText()
+                : null,
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt
             };

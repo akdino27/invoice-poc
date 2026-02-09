@@ -7,7 +7,13 @@ using invoice_v1.src.Services;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
+using Npgsql;
+
 var builder = WebApplication.CreateBuilder(args);
+
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
+
+
 
 
 // SERILOG CONFIGURATION
@@ -32,19 +38,18 @@ Log.Information("Starting Invoice Processing Backend V2");
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
-
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
 {
-    options.UseSqlServer(connectionString, sqlOptions =>
+    options.UseNpgsql(connectionString, npgsqlOptions =>
     {
-        sqlOptions.EnableRetryOnFailure(
+        npgsqlOptions.EnableRetryOnFailure(
             maxRetryCount: 5,
             maxRetryDelay: TimeSpan.FromSeconds(30),
-            errorNumbersToAdd: null);
-        sqlOptions.CommandTimeout(120);
+            errorCodesToAdd: null);
+
+        npgsqlOptions.CommandTimeout(120);
     });
 });
-
 
 // REPOSITORIES
 

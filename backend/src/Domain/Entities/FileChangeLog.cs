@@ -17,7 +17,7 @@ namespace invoice_v1.src.Domain.Entities
         public string? ChangeType { get; set; }
 
         [Required]
-        public DateTime DetectedAt { get; set; }
+        public DateTime DetectedAt { get; set; } // store as UTC
 
         [MaxLength(200)]
         public string? MimeType { get; set; }
@@ -29,7 +29,6 @@ namespace invoice_v1.src.Domain.Entities
 
         public DateTime? GoogleDriveModifiedTime { get; set; }
 
-        // Indicates if this log has been processed into a JobQueue entry.
         public bool Processed { get; set; } = false;
 
         public DateTime? ProcessedAt { get; set; }

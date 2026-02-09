@@ -25,6 +25,17 @@ namespace invoice_v1.src.Services
             "text/csv",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         };
+        private static DateTime ToUtc(DateTime dt)
+        {
+            return dt.Kind switch
+            {
+                DateTimeKind.Utc => dt,
+                DateTimeKind.Local => dt.ToUniversalTime(),
+                DateTimeKind.Unspecified => DateTime.SpecifyKind(dt, DateTimeKind.Utc),
+                _ => dt
+            };
+        }
+
 
         public DriveMonitoringService(
             ILogger<DriveMonitoringService> logger,
@@ -100,7 +111,7 @@ namespace invoice_v1.src.Services
 
                 foreach (var file in lastSeenFiles.Where(f => f.FileId != null))
                 {
-                    _lastSeenFiles.TryAdd(file.FileId!, file.ModifiedTime);
+                    _lastSeenFiles.TryAdd(file.FileId!, ToUtc(file.ModifiedTime));
                 }
 
                 _logger.LogInformation(
@@ -143,7 +154,8 @@ namespace invoice_v1.src.Services
 
                 var allCurrentFiles = files
                     .Where(f => f.ModifiedTime.HasValue)
-                    .ToDictionary(f => f.Id, f => f.ModifiedTime!.Value);
+                    .ToDictionary(f => f.Id, f => ToUtc(f.ModifiedTime!.Value));
+
 
                 var logsToAdd = new List<FileChangeLog>();
 
@@ -163,7 +175,10 @@ namespace invoice_v1.src.Services
                         continue;
                     }
 
-                    var fileModifiedTime = file.ModifiedTime ?? DateTime.MinValue;
+                    var fileModifiedTime = file.ModifiedTime.HasValue
+                        ? ToUtc(file.ModifiedTime.Value)
+                        : DateTime.MinValue;
+
 
                     if (!_lastSeenFiles.ContainsKey(file.Id))
                     {
@@ -213,7 +228,7 @@ namespace invoice_v1.src.Services
                     .Where(f => f.MimeType != null &&
                                _allowedMimeTypes.Contains(f.MimeType) &&
                                f.ModifiedTime.HasValue)
-                    .ToDictionary(f => f.Id, f => f.ModifiedTime!.Value);
+                    .ToDictionary(f => f.Id, f => ToUtc(f.ModifiedTime!.Value));
 
                 foreach (var kvp in allowedCurrentFiles)
                 {

@@ -1,12 +1,13 @@
-﻿using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
+﻿using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 
 namespace invoice_v1.src.Domain.Entities
 {
     public class Product
     {
         [Key]
-        public Guid Id { get; set; }
+        public Guid Id { get; set; } = Guid.NewGuid();
 
         [Required]
         [MaxLength(100)]
@@ -25,14 +26,12 @@ namespace invoice_v1.src.Domain.Entities
         [MaxLength(100)]
         public string? SecondaryCategory { get; set; }
 
-        [Column(TypeName = "decimal(18,2)")]
         public decimal? DefaultUnitRate { get; set; }
 
-        [Column(TypeName = "decimal(18,4)")]
         public decimal TotalQuantitySold { get; set; } = 0;
 
-        [Column(TypeName = "decimal(18,2)")]
         public decimal TotalRevenue { get; set; } = 0;
+
         public int InvoiceCount { get; set; } = 0;
 
         public DateTime? LastSoldDate { get; set; }
