@@ -24,3 +24,7 @@ packages/
 
 # User-specific
 launchSettings.json
+
+*.json
+backend/*.json
+
