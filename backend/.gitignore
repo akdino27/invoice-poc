@@ -25,6 +25,4 @@ packages/
 # User-specific
 launchSettings.json
 
-*.json
-backend/*.json
-
+invoice-486512-12a8a3e5d1f8.json
