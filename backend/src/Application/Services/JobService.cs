@@ -7,36 +7,29 @@ using System.Text.Json;
 
 namespace invoice_v1.src.Application.Services
 {
-    // Implements job management business logic.
     public class JobService : IJobService
     {
-        private readonly IJobRepository _jobRepository;
-        private readonly ILogger<JobService> _logger;
+        private readonly IJobRepository jobRepository;
+        private readonly ILogger<JobService> logger;
         private const int MaxRetries = 3;
 
-        public JobService(IJobRepository jobRepository, ILogger<JobService> logger)
+        public JobService(
+            IJobRepository jobRepository,
+            ILogger<JobService> logger)
         {
-            _jobRepository = jobRepository;
-            _logger = logger;
+            this.jobRepository = jobRepository;
+            this.logger = logger;
         }
 
         public async Task<JobDto> CreateJobFromLogAsync(FileChangeLog log)
         {
-            if (string.IsNullOrWhiteSpace(log.FileId))
-            {
-                throw new ArgumentException("FileId cannot be empty", nameof(log));
-            }
-
-            // Create structured payload conforming to job_payload_schema.json
             var payload = new
             {
                 fileId = log.FileId,
                 originalName = log.FileName,
                 mimeType = log.MimeType,
                 fileSize = log.FileSize,
-                uploader = log.ModifiedBy,
-                schemaVersion = "1.0",
-                idempotencyKey = $"{log.FileId}_{log.DetectedAt:yyyyMMddHHmmss}",
+                modifiedBy = log.ModifiedBy,
                 detectedAt = log.DetectedAt
             };
 
@@ -47,83 +40,64 @@ namespace invoice_v1.src.Application.Services
                 PayloadJson = JsonDocument.Parse(JsonSerializer.Serialize(payload)),
                 Status = nameof(JobStatus.PENDING),
                 CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                UpdatedAt = DateTime.UtcNow,
+                NextRetryAt = null
             };
 
-            var created = await _jobRepository.CreateJobAsync(job);
-            await _jobRepository.MarkFileChangeLogAsProcessedAsync(log.Id);
+            await jobRepository.CreateAsync(job);
+            logger.LogInformation("Created job {JobId} for file {FileId}", job.Id, log.FileId);
 
-            _logger.LogInformation(
-                "Created job {JobId} for file {FileId} ({FileName})",
-                created.Id,
-                log.FileId,
-                log.FileName);
-
-            return MapToDto(created);
+            return MapToDto(job);
         }
 
         public async Task<JobDto?> GetJobByIdAsync(Guid jobId)
         {
-            var job = await _jobRepository.GetByIdAsync(jobId);
+            var job = await jobRepository.GetByIdAsync(jobId);
             return job != null ? MapToDto(job) : null;
         }
 
         public async Task<(List<JobDto> Jobs, int Total)> GetJobsAsync(
-            JobStatus? status,
-            int page,
-            int pageSize)
+            JobStatus? status, int page, int pageSize)
         {
             if (page < 1) page = 1;
             if (pageSize < 1 || pageSize > 100) pageSize = 50;
 
             var skip = (page - 1) * pageSize;
-            var jobs = await _jobRepository.GetJobsAsync(status, skip, pageSize);
-            var total = await _jobRepository.GetJobCountAsync(status);
+            var jobs = await jobRepository.GetAllAsync(status, skip, pageSize);
+            var total = await jobRepository.GetCountAsync(status);
 
-            return (jobs.Select(MapToDto).ToList(), total);
+            var jobDtos = jobs.Select(MapToDto).ToList();
+            return (jobDtos, total);
         }
 
         public async Task MarkProcessingAsync(Guid jobId, string workerId)
         {
-            var job = await _jobRepository.GetByIdAsync(jobId);
+            var job = await jobRepository.GetByIdAsync(jobId);
             if (job == null)
-            {
                 throw new InvalidOperationException($"Job {jobId} not found");
-            }
 
-            if (job.Status != nameof(JobStatus.PENDING))
-            {
-                throw new InvalidOperationException(
-                    $"Job {jobId} cannot be marked as PROCESSING. Current status: {job.Status}");
-            }
-
-            job.Status = nameof(JobStatus.PROCESSING);
+            job.Status = "PROCESSING";
             job.LockedBy = workerId;
             job.LockedAt = DateTime.UtcNow;
+            job.UpdatedAt = DateTime.UtcNow;
 
-            await _jobRepository.UpdateJobAsync(job);
-
-            _logger.LogInformation(
-                "Job {JobId} marked as PROCESSING by worker {WorkerId}",
-                jobId,
-                workerId);
+            await jobRepository.UpdateJobAsync(job);
+            logger.LogInformation("Job {JobId} locked by worker {WorkerId}", jobId, workerId);
         }
 
         public async Task MarkCompletedAsync(Guid jobId, object result)
         {
-            var job = await _jobRepository.GetByIdAsync(jobId);
+            var job = await jobRepository.GetByIdAsync(jobId);
             if (job == null)
-            {
                 throw new InvalidOperationException($"Job {jobId} not found");
-            }
 
-            job.Status = nameof(JobStatus.COMPLETED);
-            job.ErrorMessage = null;
+            job.Status = "COMPLETED";
             job.UpdatedAt = DateTime.UtcNow;
+            job.LockedBy = null;
+            job.LockedAt = null;
 
-            await _jobRepository.UpdateJobAsync(job);
-
-            _logger.LogInformation("Job {JobId} marked as COMPLETED", jobId);
+            await jobRepository.UpdateJobAsync(job);
+            logger.LogInformation("Job {JobId} marked as COMPLETED", jobId);
         }
 
         public async Task MarkInvalidAsync(Guid jobId, JsonDocument reason)
@@ -131,9 +105,11 @@ namespace invoice_v1.src.Application.Services
             var job = await _jobRepository.GetByIdAsync(jobId)
                 ?? throw new InvalidOperationException($"Job {jobId} not found");
 
-            job.Status = nameof(JobStatus.INVALID);
+            job.Status = "INVALID";
             job.ErrorMessage = reason;
             job.UpdatedAt = DateTime.UtcNow;
+            job.LockedBy = null;
+            job.LockedAt = null;
 
             await _jobRepository.UpdateJobAsync(job);
         }
@@ -146,67 +122,59 @@ namespace invoice_v1.src.Application.Services
 
             job.ErrorMessage = error;
             job.RetryCount++;
+            job.ErrorMessage = errorMessage;
+            job.UpdatedAt = DateTime.UtcNow;
+            job.LockedBy = null;
+            job.LockedAt = null;
 
-            // Exponential backoff for retries
-            if (job.RetryCount < MaxRetries)
+            if (job.RetryCount >= MaxRetries)
             {
-                //Change status to PENDING (was FAILED)
-                job.Status = nameof(JobStatus.PENDING);
+                // Permanently failed after max retries
+                job.Status = "FAILED";
+                job.NextRetryAt = null;
 
-                // Release lock so worker can claim it
-                job.LockedBy = null;
-                job.LockedAt = null;
-
-                var backoffMinutes = Math.Pow(2, job.RetryCount);
-                job.NextRetryAt = DateTime.UtcNow.AddMinutes(backoffMinutes);
-
-                _logger.LogWarning(
-                    "Job {JobId} scheduled for retry {RetryCount}/{MaxRetries}. Next retry at {NextRetryAt}",
-                    jobId,
-                    job.RetryCount,
-                    MaxRetries,
-                    job.NextRetryAt);
+                logger.LogError(
+                    "Job {JobId} permanently FAILED after {RetryCount} attempts. Error: {Error}",
+                    jobId, job.RetryCount, errorMessage);
             }
             else
             {
-                //Only set to FAILED permanently after max retries
-                job.Status = nameof(JobStatus.FAILED);
-                job.LockedBy = null;
-                job.LockedAt = null;
+                // Calculate exponential backoff: 2^retryCount minutes
+                var delayMinutes = Math.Pow(2, job.RetryCount);
+                job.NextRetryAt = DateTime.UtcNow.AddMinutes(delayMinutes);
+                job.Status = "PENDING";
 
-                _logger.LogError(
-                    "Job {JobId} marked as FAILED permanently after {RetryCount} retries",
-                    jobId,
-                    job.RetryCount);
+                logger.LogWarning(
+                    "Job {JobId} marked as FAILED (attempt {RetryCount}/{MaxRetries}). " +
+                    "Will retry at {NextRetryAt} (in {DelayMinutes} minutes). Error: {Error}",
+                    jobId, job.RetryCount, MaxRetries, job.NextRetryAt, delayMinutes, errorMessage);
             }
 
-            job.UpdatedAt = DateTime.UtcNow;
-            await _jobRepository.UpdateJobAsync(job);
+            await jobRepository.UpdateJobAsync(job);
         }
-
 
         public async Task RequeueJobAsync(Guid jobId)
         {
-            var job = await _jobRepository.GetByIdAsync(jobId);
+            var job = await jobRepository.GetByIdAsync(jobId);
             if (job == null)
-            {
                 throw new InvalidOperationException($"Job {jobId} not found");
-            }
 
-            job.Status = nameof(JobStatus.PENDING);
+            if (job.Status != "FAILED" && job.Status != "INVALID")
+                throw new InvalidOperationException($"Only FAILED or INVALID jobs can be requeued");
+
+            job.Status = "PENDING";
+            job.RetryCount = 0;
+            job.ErrorMessage = null;
             job.LockedBy = null;
             job.LockedAt = null;
             job.NextRetryAt = null;
-            job.ErrorMessage = null;
-            job.RetryCount = 0;
             job.UpdatedAt = DateTime.UtcNow;
 
-            await _jobRepository.UpdateJobAsync(job);
-
-            _logger.LogInformation("Job {JobId} requeued by admin", jobId);
+            await jobRepository.UpdateJobAsync(job);
+            logger.LogInformation("Job {JobId} requeued successfully", jobId);
         }
 
-        private static JobDto MapToDto(JobQueue job)
+        private JobDto MapToDto(JobQueue job)
         {
             object? payload = null;
             try
@@ -218,7 +186,14 @@ namespace invoice_v1.src.Application.Services
             }
             catch
             {
-                payload = job.PayloadJson;
+                try
+                {
+                    payload = JsonSerializer.Deserialize<object>(job.PayloadJson);
+                }
+                catch
+                {
+                    payload = job.PayloadJson;
+                }
             }
 
             return new JobDto

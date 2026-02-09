@@ -1,8 +1,8 @@
+using invoice_v1.src.Application.BackgroundServices;
 using invoice_v1.src.Application.Interfaces;
 using invoice_v1.src.Application.Services;
 using invoice_v1.src.Infrastructure.Data;
 using invoice_v1.src.Infrastructure.Repositories;
-using invoice_v1.src.Application.BackgroundServices;
 using invoice_v1.src.Services;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -52,30 +52,30 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 });
 
 // REPOSITORIES
-
 builder.Services.AddScoped<IJobRepository, JobRepository>();
+builder.Services.AddScoped<IInvalidInvoiceRepository, InvalidInvoiceRepository>();
+builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
+builder.Services.AddScoped<IInvoiceLineRepository, InvoiceLineRepository>();
+builder.Services.AddScoped<IFileChangeLogRepository, FileChangeLogRepository>();
 
-
-// APPLICATION SERVICES
-
+// SERVICES (Business Logic Layer)
 builder.Services.AddScoped<IJobService, JobService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
+builder.Services.AddScoped<IInvalidInvoiceService, InvalidInvoiceService>();
+builder.Services.AddScoped<ICallbackService, CallbackService>();
+builder.Services.AddScoped<ILogService, LogService>();
+builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
-builder.Services.AddSingleton<IHmacValidator, HmacValidator>();
-
-
-// V1 SERVICES (Preserved)
-
-builder.Services.AddSingleton<IGoogleDriveService, GoogleDriveService>();
-
+builder.Services.AddScoped<IHmacValidator, HmacValidator>();
 
 // BACKGROUND SERVICES
-
-// Drive Monitoring
 builder.Services.AddHostedService<DriveMonitoringService>();
-
-// Job Creation from FileChangeLogs
 builder.Services.AddHostedService<JobCreationService>();
+
+// GOOGLE DRIVE
+builder.Services.AddSingleton<IGoogleDriveService, GoogleDriveService>();
+
 
 
 // CORS CONFIGURATION

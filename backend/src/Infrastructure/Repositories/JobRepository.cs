@@ -1,32 +1,34 @@
 ﻿using invoice_v1.src.Domain.Entities;
 using invoice_v1.src.Domain.Enums;
 using invoice_v1.src.Infrastructure.Data;
-using invoice_v1.src.Infrastructure.Repositories;
 using Microsoft.EntityFrameworkCore;
 
 namespace invoice_v1.src.Infrastructure.Repositories
 {
     public class JobRepository : IJobRepository
     {
-        private readonly ApplicationDbContext _context;
-        private readonly ILogger<JobRepository> _logger;
+        private readonly ApplicationDbContext context;
 
-        public JobRepository(ApplicationDbContext context, ILogger<JobRepository> logger)
+        public JobRepository(ApplicationDbContext context)
         {
-            _context = context;
-            _logger = logger;
+            this.context = context;
+        }
+
+        public async Task<JobQueue> CreateAsync(JobQueue job)
+        {
+            context.JobQueues.Add(job);
+            await context.SaveChangesAsync();
+            return job;
         }
 
         public async Task<JobQueue?> GetByIdAsync(Guid id)
         {
-            return await _context.JobQueues
-                .AsNoTracking()
-                .FirstOrDefaultAsync(j => j.Id == id);
+            return await context.JobQueues.FindAsync(id);
         }
 
-        public async Task<List<JobQueue>> GetJobsAsync(JobStatus? status, int skip, int take)
+        public async Task<List<JobQueue>> GetAllAsync(JobStatus? status, int skip, int take)
         {
-            var query = _context.JobQueues.AsNoTracking().AsQueryable();
+            var query = context.JobQueues.AsQueryable();
 
             if (status.HasValue)
             {
@@ -41,9 +43,9 @@ namespace invoice_v1.src.Infrastructure.Repositories
                 .ToListAsync();
         }
 
-        public async Task<int> GetJobCountAsync(JobStatus? status)
+        public async Task<int> GetCountAsync(JobStatus? status)
         {
-            var query = _context.JobQueues.AsQueryable();
+            var query = context.JobQueues.AsQueryable();
 
             if (status.HasValue)
             {
@@ -54,47 +56,17 @@ namespace invoice_v1.src.Infrastructure.Repositories
             return await query.CountAsync();
         }
 
-        public async Task<JobQueue> CreateJobAsync(JobQueue job)
-        {
-            _context.JobQueues.Add(job);
-            await _context.SaveChangesAsync();
-
-            _logger.LogInformation("Created job {JobId} of type {JobType}", job.Id, job.JobType);
-
-            return job;
-        }
-
         public async Task UpdateJobAsync(JobQueue job)
         {
-            job.UpdatedAt = DateTime.UtcNow;
-            _context.JobQueues.Update(job);
-            await _context.SaveChangesAsync();
-
-            _logger.LogDebug("Updated job {JobId} to status {Status}", job.Id, job.Status);
+            context.Entry(job).State = EntityState.Modified;
+            await context.SaveChangesAsync();
         }
 
-        public async Task<List<FileChangeLog>> GetUnprocessedFileChangeLogsAsync(int limit)
+        public async Task<int> GetPendingCountAsync()
         {
-            return await _context.FileChangeLogs
-                .Where(log => !log.Processed &&
-                             (log.ChangeType == "Upload" || log.ChangeType == "Modified") &&
-                             log.FileId != null)
-                .OrderBy(log => log.DetectedAt)
-                .Take(limit)
-                .ToListAsync();
-        }
-
-        public async Task MarkFileChangeLogAsProcessedAsync(int logId)
-        {
-            var log = await _context.FileChangeLogs.FindAsync(logId);
-            if (log != null)
-            {
-                log.Processed = true;
-                log.ProcessedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-
-                _logger.LogDebug("Marked FileChangeLog {LogId} as processed", logId);
-            }
+            return await context.JobQueues
+                .Where(j => j.Status == "PENDING")
+                .CountAsync();
         }
     }
 }

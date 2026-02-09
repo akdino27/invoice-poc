@@ -18,18 +18,21 @@ class Config(BaseSettings):
     
     # Google Drive Configuration
     google_service_account_key: str = Field(..., description="Path to service account JSON")
+    drive_download_timeout: int = Field(default=300, description="Drive download timeout in seconds")
+    drive_chunk_size: int = Field(default=1048576, description="Download chunk size in bytes (1MB default)")
+    drive_max_retries: int = Field(default=3, description="Max retry attempts for file downloads")
     
-    # Groq LLM Configuration - UPDATED FOR LLAMA-4
+    # Groq LLM Configuration
     groq_api_key: str = Field(..., description="Groq API key")
     groq_model: str = Field(
-        default="llama-4-70b-versatile",  # CHANGED TO LLAMA-4
+        default="llama-3.3-70b-versatile",
         description="Groq model identifier"
     )
     
     # Worker Configuration
     worker_id: str = Field(default="worker-1", description="Unique worker identifier")
     poll_interval: int = Field(default=5, description="Job polling interval in seconds")
-    max_retries: int = Field(default=3, description="Maximum retry attempts")
+    max_retries: int = Field(default=3, description="Maximum retry attempts for job processing")
     
     @property
     def db_connection_string(self) -> str:

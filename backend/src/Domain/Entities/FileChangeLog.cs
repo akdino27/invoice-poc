@@ -5,7 +5,7 @@ namespace invoice_v1.src.Domain.Entities
     public class FileChangeLog
     {
         [Key]
-        public int Id { get; set; }
+        public Guid Id { get; set; }
 
         [MaxLength(500)]
         public string? FileName { get; set; }

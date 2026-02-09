@@ -1,9 +1,6 @@
 ﻿using invoice_v1.src.Application.DTOs;
 using invoice_v1.src.Application.Interfaces;
-using invoice_v1.src.Domain.Entities;
-using invoice_v1.src.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using System.Text;
 using System.Text.Json;
 
@@ -13,24 +10,18 @@ namespace invoice_v1.src.Api.Controllers
     [Route("api/ai/[controller]")]
     public class CallbackController : ControllerBase
     {
-        private readonly IJobService _jobService;
-        private readonly IInvoiceService _invoiceService;
-        private readonly IHmacValidator _hmacValidator;
-        private readonly ApplicationDbContext _context;
-        private readonly ILogger<CallbackController> _logger;
+        private readonly ICallbackService callbackService;
+        private readonly IHmacValidator hmacValidator;
+        private readonly ILogger<CallbackController> logger;
 
         public CallbackController(
-            IJobService jobService,
-            IInvoiceService invoiceService,
+            ICallbackService callbackService,
             IHmacValidator hmacValidator,
-            ApplicationDbContext context,
             ILogger<CallbackController> logger)
         {
-            _jobService = jobService;
-            _invoiceService = invoiceService;
-            _hmacValidator = hmacValidator;
-            _context = context;
-            _logger = logger;
+            this.callbackService = callbackService;
+            this.hmacValidator = hmacValidator;
+            this.logger = logger;
         }
 
         [HttpPost]
@@ -38,6 +29,7 @@ namespace invoice_v1.src.Api.Controllers
         public async Task<IActionResult> HandleCallback()
         {
             Request.EnableBuffering();
+
 
             using var reader = new StreamReader(Request.Body, Encoding.UTF8, leaveOpen: true);
             var requestBody = await reader.ReadToEndAsync();
@@ -48,7 +40,7 @@ namespace invoice_v1.src.Api.Controllers
                 return Unauthorized(new { error = "Missing X-Callback-HMAC header" });
             }
 
-            if (!_hmacValidator.ValidateHmac(requestBody, hmacHeader!))
+            if (!hmacValidator.ValidateHmac(requestBody, providedHmac))
             {
                 return Unauthorized(new { error = "Invalid HMAC signature" });
             }

@@ -21,7 +21,7 @@ class JobPayload(BaseModel):
     fileSize: int = Field(..., description="File size in bytes")
     uploader: Optional[str] = Field(None, description="User who uploaded file")
     schemaVersion: str = Field(default="1.0")
-    idempotencyKey: str = Field(..., description="Unique key for deduplication")
+    idempotencyKey: Optional[str] = None
     detectedAt: str = Field(..., description="ISO timestamp of detection")
 
 

@@ -2,6 +2,7 @@
 using invoice_v1.src.Application.Interfaces;
 using invoice_v1.src.Domain.Entities;
 using invoice_v1.src.Infrastructure.Data;
+using invoice_v1.src.Infrastructure.Repositories;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -9,13 +10,21 @@ namespace invoice_v1.src.Application.Services
 {
     public class InvoiceService : IInvoiceService
     {
-        private readonly ApplicationDbContext _context;
-        private readonly ILogger<InvoiceService> _logger;
+        private readonly ApplicationDbContext context;
+        private readonly IInvoiceRepository invoiceRepository;
+        private readonly IProductRepository productRepository;
+        private readonly ILogger<InvoiceService> logger;
 
-        public InvoiceService(ApplicationDbContext context, ILogger<InvoiceService> logger)
+        public InvoiceService(
+            ApplicationDbContext context,
+            IInvoiceRepository invoiceRepository,
+            IProductRepository productRepository,
+            ILogger<InvoiceService> logger)
         {
-            _context = context;
-            _logger = logger;
+            this.context = context;
+            this.invoiceRepository = invoiceRepository;
+            this.productRepository = productRepository;
+            this.logger = logger;
         }
 
         public async Task<InvoiceDto> CreateOrUpdateInvoiceFromCallbackAsync(Guid jobId, object result)
@@ -23,15 +32,11 @@ namespace invoice_v1.src.Application.Services
             var resultJson = JsonSerializer.Serialize(result);
             var extractedData = JsonSerializer.Deserialize<JsonElement>(resultJson);
 
-            //  VALIDATE CRITICAL FIELDS
             ValidateCriticalFields(extractedData);
 
-            //  GET JOB AND FILE INFO 
-            var job = await _context.JobQueues.FindAsync(jobId);
+            var job = await context.JobQueues.FindAsync(jobId);
             if (job == null)
-            {
                 throw new InvalidOperationException($"Job {jobId} not found");
-            }
 
             if (job.PayloadJson == null)
             {
@@ -44,24 +49,51 @@ namespace invoice_v1.src.Application.Services
                 ?? throw new InvalidOperationException("FileId not found in job payload");
             var fileName = GetStringProperty(payload, "originalName");
 
-            // FIND OR CREATE INVOICE 
-            var existingInvoice = await _context.Invoices
+            //Use a fresh query with no tracking to avoid concurrency issues
+            var existingInvoice = await context.Invoices
+                .AsNoTracking()
                 .Include(i => i.LineItems)
                 .FirstOrDefaultAsync(i => i.DriveFileId == fileId);
 
             Invoice invoice;
+            bool isUpdate = false;
+
             if (existingInvoice != null)
             {
-                invoice = existingInvoice;
-                invoice.UpdatedAt = DateTime.UtcNow;
-                _logger.LogInformation("Updating existing invoice {InvoiceId}", invoice.Id);
+                // UPDATE EXISTING INVOICE
+                logger.LogInformation("Updating existing invoice {InvoiceId} for file {FileId}",
+                    existingInvoice.Id, fileId);
 
-                // Remove old line items
-                _context.InvoiceLines.RemoveRange(existingInvoice.LineItems);
+                // Delete existing line items in a separate operation
+                var existingLineItemIds = await context.InvoiceLines
+                    .Where(il => il.InvoiceId == existingInvoice.Id)
+                    .Select(il => il.Id)
+                    .ToListAsync();
+
+                if (existingLineItemIds.Any())
+                {
+                    await context.Database.ExecuteSqlRawAsync(
+                        "DELETE FROM InvoiceLines WHERE InvoiceId = {0}",
+                        existingInvoice.Id);
+
+                    logger.LogDebug("Deleted {Count} existing line items for invoice {InvoiceId}",
+                        existingLineItemIds.Count, existingInvoice.Id);
+                }
+
+                // Create a new tracked instance
+                invoice = await context.Invoices.FindAsync(existingInvoice.Id);
+                if (invoice == null)
+                    throw new InvalidOperationException($"Invoice {existingInvoice.Id} not found");
+
                 invoice.LineItems.Clear();
+                invoice.UpdatedAt = DateTime.UtcNow;
+                isUpdate = true;
             }
             else
             {
+                // CREATE NEW INVOICE
+                logger.LogInformation("Creating new invoice for file {FileId}", fileId);
+
                 invoice = new Invoice
                 {
                     Id = Guid.NewGuid(),
@@ -70,26 +102,23 @@ namespace invoice_v1.src.Application.Services
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };
-                _context.Invoices.Add(invoice);
-                _logger.LogInformation("Creating new invoice {InvoiceId}", invoice.Id);
+
+                context.Invoices.Add(invoice);
+                isUpdate = false;
             }
 
-            // MAP INVOICE HEADER FIELDS (WITH NULL SAFETY)
-
+            // Map all fields (same for both create and update)
             invoice.InvoiceNumber = GetStringProperty(extractedData, "InvoiceNumber");
             invoice.OrderId = GetStringProperty(extractedData, "OrderId");
             invoice.VendorName = GetStringProperty(extractedData, "VendorName");
             invoice.ShipMode = GetStringProperty(extractedData, "ShipMode");
-            invoice.Currency = GetStringProperty(extractedData, "Currency") ?? "USD";  // Default to USD
+            invoice.Currency = GetStringProperty(extractedData, "Currency") ?? "USD";
             invoice.Notes = GetStringProperty(extractedData, "Notes");
             invoice.Terms = GetStringProperty(extractedData, "Terms");
-
-            // Parse invoice date
             invoice.InvoiceDate = GetDateTimeProperty(extractedData, "InvoiceDate");
 
-            // ===== PARSE BILLTO OBJECT =====
-            if (extractedData.TryGetProperty("BillTo", out var billToElement)
-                && billToElement.ValueKind == JsonValueKind.Object)
+            if (extractedData.TryGetProperty("BillTo", out var billToElement) &&
+                billToElement.ValueKind == JsonValueKind.Object)
             {
                 invoice.BillToName = GetStringProperty(billToElement, "Name");
             }
@@ -98,9 +127,8 @@ namespace invoice_v1.src.Application.Services
                 invoice.BillToName = null;
             }
 
-            //  PARSE SHIPTO OBJECT 
-            if (extractedData.TryGetProperty("ShipTo", out var shipToElement)
-                && shipToElement.ValueKind == JsonValueKind.Object)
+            if (extractedData.TryGetProperty("ShipTo", out var shipToElement) &&
+                shipToElement.ValueKind == JsonValueKind.Object)
             {
                 invoice.ShipToCity = GetStringProperty(shipToElement, "City");
                 invoice.ShipToState = GetStringProperty(shipToElement, "State");
@@ -113,22 +141,19 @@ namespace invoice_v1.src.Application.Services
                 invoice.ShipToCountry = null;
             }
 
-            //  PARSE FINANCIAL FIELDS (ALL NULLABLE) 
             invoice.Subtotal = GetDecimalProperty(extractedData, "Subtotal");
             invoice.ShippingCost = GetDecimalProperty(extractedData, "ShippingCost");
             invoice.TotalAmount = GetDecimalProperty(extractedData, "TotalAmount");
             invoice.BalanceDue = GetDecimalProperty(extractedData, "BalanceDue");
 
-            //  PARSE DISCOUNT OBJECT (SPECIAL CASE)
-            if (extractedData.TryGetProperty("Discount", out var discountElement)
-                && discountElement.ValueKind == JsonValueKind.Object)
+            if (extractedData.TryGetProperty("Discount", out var discountElement) &&
+                discountElement.ValueKind == JsonValueKind.Object)
             {
                 invoice.DiscountPercentage = GetDecimalProperty(discountElement, "Percentage");
                 invoice.DiscountAmount = GetDecimalProperty(discountElement, "Amount");
             }
             else
             {
-                // Discount is null or missing
                 invoice.DiscountPercentage = null;
                 invoice.DiscountAmount = null;
             }
@@ -137,20 +162,14 @@ namespace invoice_v1.src.Application.Services
             invoice.ExtractedDataJson = JsonDocument.Parse(resultJson);
 
 
-            //  PROCESS LINE ITEMS 
-            if (!extractedData.TryGetProperty("LineItems", out var lineItemsElement)
-                || lineItemsElement.ValueKind != JsonValueKind.Array)
-            {
+            if (!extractedData.TryGetProperty("LineItems", out var lineItemsElement) ||
+                lineItemsElement.ValueKind != JsonValueKind.Array)
                 throw new InvalidOperationException("LineItems array is required");
-            }
 
             var lineItemsArray = lineItemsElement.EnumerateArray().ToList();
             if (lineItemsArray.Count == 0)
-            {
                 throw new InvalidOperationException("Invoice must have at least one line item");
-            }
 
-            // Track which products we've already counted for this invoice
             var processedProducts = new HashSet<Guid>();
 
             foreach (var lineElement in lineItemsArray)
@@ -158,7 +177,7 @@ namespace invoice_v1.src.Application.Services
                 var productId = GetStringProperty(lineElement, "ProductId");
                 if (string.IsNullOrWhiteSpace(productId))
                 {
-                    _logger.LogWarning("Skipping line item with missing ProductId");
+                    logger.LogWarning("Skipping line item with missing ProductId");
                     continue;
                 }
 
@@ -168,23 +187,15 @@ namespace invoice_v1.src.Application.Services
                 var unitRate = GetDecimalProperty(lineElement, "UnitRate") ?? 0;
                 var amount = GetDecimalProperty(lineElement, "Amount") ?? 0;
 
-                // Validate critical line item fields
                 if (quantity <= 0)
                 {
-                    _logger.LogWarning("Skipping line item {ProductId} with invalid quantity: {Quantity}",
+                    logger.LogWarning("Skipping line item {ProductId} with invalid quantity {Quantity}",
                         productId, quantity);
                     continue;
                 }
 
-                // Find or create product WITHOUT calling SaveChanges
-                var product = await FindOrCreateProductNoSaveAsync(
-                    productId,
-                    productName,
-                    category,
-                    unitRate
-                );
+                var product = await FindOrCreateProductNoSaveAsync(productId, productName, category, unitRate);
 
-                // Create invoice line
                 var line = new InvoiceLine
                 {
                     Id = Guid.NewGuid(),
@@ -198,10 +209,8 @@ namespace invoice_v1.src.Application.Services
                     Amount = amount,
                     CreatedAt = DateTime.UtcNow
                 };
-
                 invoice.LineItems.Add(line);
 
-                //  UPDATE PRODUCT STATISTICS 
                 product.TotalQuantitySold += quantity;
                 product.TotalRevenue += amount;
 
@@ -211,11 +220,10 @@ namespace invoice_v1.src.Application.Services
                     processedProducts.Add(product.Id);
                 }
 
-                // Update last sold date
                 if (invoice.InvoiceDate.HasValue)
                 {
-                    if (!product.LastSoldDate.HasValue
-                        || invoice.InvoiceDate.Value > product.LastSoldDate.Value)
+                    if (!product.LastSoldDate.HasValue ||
+                        invoice.InvoiceDate.Value > product.LastSoldDate.Value)
                     {
                         product.LastSoldDate = invoice.InvoiceDate.Value;
                     }
@@ -224,98 +232,46 @@ namespace invoice_v1.src.Application.Services
                 product.UpdatedAt = DateTime.UtcNow;
             }
 
-            // Validate at least one valid line item was processed
             if (invoice.LineItems.Count == 0)
+                throw new InvalidOperationException("No valid line items found. All line items were skipped due to missing or invalid data.");
+
+            // Mark invoice as modified if updating
+            if (isUpdate)
             {
-                throw new InvalidOperationException(
-                    "No valid line items found. All line items were skipped due to missing or invalid data.");
+                context.Entry(invoice).State = EntityState.Modified;
             }
 
-            // SAVE EVERYTHING ATOMICALLY 
-            await _context.SaveChangesAsync();
+            await context.SaveChangesAsync();
 
-            _logger.LogInformation(
-                "Invoice {InvoiceId} ({InvoiceNumber}) saved successfully with {LineCount} line items",
-                invoice.Id,
-                invoice.InvoiceNumber ?? "N/A",
-                invoice.LineItems.Count);
+            logger.LogInformation("Invoice {InvoiceId} ({InvoiceNumber}) {Action} successfully with {LineCount} line items",
+                invoice.Id, invoice.InvoiceNumber ?? "N/A", isUpdate ? "updated" : "created", invoice.LineItems.Count);
 
             return await MapToDtoAsync(invoice);
         }
 
-        // Validates that critical fields are present and valid.
-        private void ValidateCriticalFields(JsonElement extractedData)
-        {
-            var errors = new List<string>();
-
-            // Critical Field 1: InvoiceNumber
-            var invoiceNumber = GetStringProperty(extractedData, "InvoiceNumber");
-            if (string.IsNullOrWhiteSpace(invoiceNumber))
-            {
-                errors.Add("InvoiceNumber is required");
-            }
-
-            // Critical Field 2: TotalAmount
-            var totalAmount = GetDecimalProperty(extractedData, "TotalAmount");
-            if (!totalAmount.HasValue || totalAmount.Value <= 0)
-            {
-                errors.Add("TotalAmount is required and must be greater than 0");
-            }
-
-            // Critical Field 3: LineItems array must exist
-            if (!extractedData.TryGetProperty("LineItems", out var lineItems)
-                || lineItems.ValueKind != JsonValueKind.Array)
-            {
-                errors.Add("LineItems array is required");
-            }
-            else if (lineItems.GetArrayLength() == 0)
-            {
-                errors.Add("LineItems array must contain at least one item");
-            }
-
-            if (errors.Any())
-            {
-                var errorMessage = "Critical validation failed: " + string.Join("; ", errors);
-                _logger.LogError(errorMessage);
-                throw new InvalidOperationException(errorMessage);
-            }
-        }
 
         public async Task<InvoiceDto?> GetInvoiceByIdAsync(Guid id)
         {
-            var invoice = await _context.Invoices
-                .Include(i => i.LineItems)
-                    .ThenInclude(l => l.Product)
-                .AsNoTracking()
-                .FirstOrDefaultAsync(i => i.Id == id);
-
+            var invoice = await invoiceRepository.GetByIdAsync(id, includeLineItems: true);
             return invoice != null ? await MapToDtoAsync(invoice) : null;
         }
 
         public async Task<InvoiceDto?> GetInvoiceByFileIdAsync(string fileId)
         {
-            var invoice = await _context.Invoices
-                .Include(i => i.LineItems)
-                    .ThenInclude(l => l.Product)
-                .AsNoTracking()
-                .FirstOrDefaultAsync(i => i.DriveFileId == fileId);
-
+            var invoice = await invoiceRepository.GetByFileIdAsync(fileId, includeLineItems: true);
             return invoice != null ? await MapToDtoAsync(invoice) : null;
         }
 
-        // Find existing product or create new one WITHOUT calling SaveChanges.
         private async Task<Product> FindOrCreateProductNoSaveAsync(
             string productId,
             string productName,
             string? category,
             decimal? unitRate)
         {
-            var product = await _context.Products
-                .FirstOrDefaultAsync(p => p.ProductId == productId);
+            var product = await productRepository.GetByProductIdAsync(productId);
 
             if (product == null)
             {
-                // Parse category into primary and secondary
                 string? primaryCategory = null;
                 string? secondaryCategory = null;
 
@@ -338,24 +294,18 @@ namespace invoice_v1.src.Application.Services
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };
+                context.Products.Add(product);
 
-                _context.Products.Add(product);
-
-                _logger.LogInformation(
-                    "Created new product {ProductId}: {ProductName} ({Category})",
-                    productId,
-                    productName,
-                    category ?? "N/A");
+                logger.LogInformation("Created new product {ProductId} - {ProductName} ({Category})",
+                    productId, productName, category ?? "N/A");
             }
             else
             {
-                // Update product name/category if changed
                 if (product.ProductName != productName || product.Category != category)
                 {
                     product.ProductName = productName;
                     product.Category = category;
 
-                    // Re-parse category
                     if (!string.IsNullOrWhiteSpace(category))
                     {
                         var parts = category.Split(',', StringSplitOptions.TrimEntries);
@@ -432,12 +382,40 @@ namespace invoice_v1.src.Application.Services
             };
         }
 
+        private void ValidateCriticalFields(JsonElement extractedData)
+        {
+            var errors = new List<string>();
 
-        // Safely extracts a string property from JSON.
+            var invoiceNumber = GetStringProperty(extractedData, "InvoiceNumber");
+            if (string.IsNullOrWhiteSpace(invoiceNumber))
+                errors.Add("InvoiceNumber is required");
+
+            var totalAmount = GetDecimalProperty(extractedData, "TotalAmount");
+            if (!totalAmount.HasValue || totalAmount.Value <= 0)
+                errors.Add("TotalAmount is required and must be greater than 0");
+
+            if (!extractedData.TryGetProperty("LineItems", out var lineItems) ||
+                lineItems.ValueKind != JsonValueKind.Array)
+            {
+                errors.Add("LineItems array is required");
+            }
+            else if (lineItems.GetArrayLength() == 0)
+            {
+                errors.Add("LineItems array must contain at least one item");
+            }
+
+            if (errors.Any())
+            {
+                var errorMessage = $"Critical validation failed: {string.Join(", ", errors)}";
+                logger.LogError(errorMessage);
+                throw new InvalidOperationException(errorMessage);
+            }
+        }
+
         private string? GetStringProperty(JsonElement element, string propertyName)
         {
             if (!element.TryGetProperty(propertyName, out var prop))
-                return null;  // Property doesn't exist
+                return null;
 
             if (prop.ValueKind == JsonValueKind.Null)
                 return null;
@@ -445,21 +423,15 @@ namespace invoice_v1.src.Application.Services
             if (prop.ValueKind == JsonValueKind.String)
                 return prop.GetString();
 
-            // Log unexpected type for debugging
-            _logger.LogDebug(
-                "Property {PropertyName} has unexpected type {ValueKind}, expected String or Null",
-                propertyName,
-                prop.ValueKind);
-
+            logger.LogDebug("Property {PropertyName} has unexpected type {ValueKind}, expected String or Null",
+                propertyName, prop.ValueKind);
             return null;
         }
 
-
-        // Returns null if property doesn't exist, is null, or cannot be parsed.
         private decimal? GetDecimalProperty(JsonElement element, string propertyName)
         {
             if (!element.TryGetProperty(propertyName, out var prop))
-                return null;  // Property doesn't exist
+                return null;
 
             if (prop.ValueKind == JsonValueKind.Null)
                 return null;
@@ -472,16 +444,13 @@ namespace invoice_v1.src.Application.Services
                 }
                 catch (FormatException)
                 {
-                    // Number is too large for decimal, try double
                     try
                     {
                         return (decimal)prop.GetDouble();
                     }
                     catch
                     {
-                        _logger.LogWarning(
-                            "Failed to parse {PropertyName} as decimal (value out of range)",
-                            propertyName);
+                        logger.LogWarning("Failed to parse {PropertyName} as decimal (value out of range)", propertyName);
                         return null;
                     }
                 }
@@ -494,15 +463,11 @@ namespace invoice_v1.src.Application.Services
                     return value;
             }
 
-            _logger.LogDebug(
-                "Property {PropertyName} has unexpected type {ValueKind}, expected Number or Null",
-                propertyName,
-                prop.ValueKind);
-
+            logger.LogDebug("Property {PropertyName} has unexpected type {ValueKind}, expected Number or Null",
+                propertyName, prop.ValueKind);
             return null;
         }
 
-        // DateTime property from JSON.
         private DateTime? GetDateTimeProperty(JsonElement element, string propertyName)
         {
             if (!element.TryGetProperty(propertyName, out var prop))
@@ -517,47 +482,7 @@ namespace invoice_v1.src.Application.Services
                 if (!string.IsNullOrWhiteSpace(str) && DateTime.TryParse(str, out var value))
                     return value;
 
-                _logger.LogWarning(
-                    "Failed to parse {PropertyName} as DateTime: {Value}",
-                    propertyName,
-                    str);
-            }
-
-            return null;
-        }
-
-        private int? GetIntProperty(JsonElement element, string propertyName)
-        {
-            if (!element.TryGetProperty(propertyName, out var prop))
-                return null;
-
-            if (prop.ValueKind == JsonValueKind.Null)
-                return null;
-
-            if (prop.ValueKind == JsonValueKind.Number)
-            {
-                try
-                {
-                    return prop.GetInt32();
-                }
-                catch (FormatException)
-                {
-                    try
-                    {
-                        return (int)prop.GetDouble();
-                    }
-                    catch
-                    {
-                        return null;
-                    }
-                }
-            }
-
-            if (prop.ValueKind == JsonValueKind.String)
-            {
-                var str = prop.GetString();
-                if (int.TryParse(str, out var value))
-                    return value;
+                logger.LogWarning("Failed to parse {PropertyName} as DateTime: {Value}", propertyName, str);
             }
 
             return null;
