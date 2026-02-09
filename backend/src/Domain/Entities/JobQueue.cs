@@ -4,10 +4,6 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace invoice_v1.src.Domain.Entities
 {
-    /// <summary>
-    /// Represents a job in the processing queue.
-    /// Jobs are created by the backend from FileChangeLogs and claimed by workers.
-    /// </summary>
     public class JobQueue
     {
         [Key]
@@ -15,19 +11,15 @@ namespace invoice_v1.src.Domain.Entities
 
         [Required]
         [MaxLength(50)]
-        public string JobType { get; set; } = nameof(Enums.JobType.INVOICE_EXTRACTION);
+        public string JobType { get; set; } = "EXTRACT_INVOICE";
 
-        /// <summary>
-        /// JSON payload containing fileId, originalName, mimeType, etc.
-        /// Schema defined in contracts/job_payload_schema.json
-        /// </summary>
         [Required]
-        [Column(TypeName = "nvarchar(max)")]
+        [Column(TypeName = "jsonb")]
         public string PayloadJson { get; set; } = string.Empty;
 
         [Required]
         [MaxLength(20)]
-        public string Status { get; set; } = nameof(Enums.JobStatus.PENDING);
+        public string Status { get; set; } = "PENDING";
 
         public int RetryCount { get; set; } = 0;
 
@@ -38,7 +30,6 @@ namespace invoice_v1.src.Domain.Entities
 
         public DateTime? NextRetryAt { get; set; }
 
-        [Column(TypeName = "nvarchar(max)")]
         public string? ErrorMessage { get; set; }
 
         [Required]

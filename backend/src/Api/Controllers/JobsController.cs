@@ -1,14 +1,18 @@
 ﻿using invoice_v1.src.Application.DTOs;
 using invoice_v1.src.Application.Interfaces;
+using invoice_v1.src.Api.Filters;
 using invoice_v1.src.Domain.Enums;
 using Microsoft.AspNetCore.Mvc;
 
 namespace invoice_v1.src.Api.Controllers
 {
-    /// Handles job management operations.
-    // Provides endpoints for listing jobs, querying job status, and admin actions.
+    /// <summary>
+    /// Handles job management operations with RBAC support.
+    /// Added RBAC enforcement to prevent vendors from seeing other vendors' jobs.
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
+    [ServiceFilter(typeof(RbacActionFilter))]
     public class JobsController : ControllerBase
     {
         private readonly IJobService _jobService;
@@ -25,14 +29,20 @@ namespace invoice_v1.src.Api.Controllers
             _logger = logger;
         }
 
-        // Lists jobs with optional filtering by status.
+        /// <summary>
+        /// Lists jobs with optional filtering by status.
+        /// Added RBAC - vendors see only their jobs, admins see all.
+        /// </summary>
         [HttpGet]
         [ProducesResponseType(typeof(JobListResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> GetJobs(
             [FromQuery] string? status = null,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 50)
         {
+            var (userEmail, isAdmin) = this.GetUserContext();
+
             JobStatus? jobStatus = null;
             if (!string.IsNullOrWhiteSpace(status))
             {
@@ -43,7 +53,13 @@ namespace invoice_v1.src.Api.Controllers
                 jobStatus = parsedStatus;
             }
 
-            var (jobs, total) = await _jobService.GetJobsAsync(jobStatus, page, pageSize);
+            // RBAC: Get jobs filtered by vendor email for non-admins
+            var (jobs, total) = await _jobService.GetJobsAsync(
+                jobStatus,
+                page,
+                pageSize,
+                userEmail,
+                isAdmin);
 
             var response = new JobListResponse
             {
@@ -56,13 +72,21 @@ namespace invoice_v1.src.Api.Controllers
             return Ok(response);
         }
 
-        // Gets a specific job by ID.
+        /// <summary>
+        /// Gets a specific job by ID.
+        /// FIXED: Added RBAC - vendors can only see their own jobs.
+        /// </summary>
         [HttpGet("{id}")]
         [ProducesResponseType(typeof(JobDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> GetJobById(Guid id)
         {
-            var job = await _jobService.GetJobByIdAsync(id);
+            var (userEmail, isAdmin) = this.GetUserContext();
+
+            var job = await _jobService.GetJobByIdAsync(id, userEmail, isAdmin);
+
             if (job == null)
             {
                 return NotFound(new { error = $"Job {id} not found" });
@@ -71,38 +95,30 @@ namespace invoice_v1.src.Api.Controllers
             return Ok(job);
         }
 
-        // Requeues a failed job (admin endpoint).
+        /// <summary>
+        /// Requeues a failed job (admin endpoint).
+        /// </summary>
         [HttpPost("{id}/requeue")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> RequeueJob(Guid id)
         {
-            // Validate admin API key
-            if (!Request.Headers.TryGetValue("X-Api-Key", out var apiKey))
-            {
-                _logger.LogWarning("Requeue rejected: Missing X-Api-Key header");
-                return Unauthorized(new { error = "Missing X-Api-Key header" });
-            }
+            var (userEmail, isAdmin) = this.GetUserContext();
 
-            var expectedApiKey = _configuration["Security:AdminApiKey"];
-            if (string.IsNullOrWhiteSpace(expectedApiKey))
+            // RBAC: Only admins can requeue jobs
+            if (!isAdmin)
             {
-                _logger.LogError("Admin API key not configured");
-                return StatusCode(500, new { error = "Server configuration error" });
-            }
-
-            if (apiKey != expectedApiKey)
-            {
-                _logger.LogWarning("Requeue rejected: Invalid API key");
-                return Unauthorized(new { error = "Invalid API key" });
+                _logger.LogWarning("Non-admin user {UserEmail} attempted to requeue job {JobId}", userEmail, id);
+                return StatusCode(403, new { error = "Admin access required" });
             }
 
             try
             {
                 await _jobService.RequeueJobAsync(id);
 
-                _logger.LogInformation("Job {JobId} requeued by admin", id);
+                _logger.LogInformation("Job {JobId} requeued by admin {UserEmail}", id, userEmail);
 
                 return Ok(new
                 {

@@ -7,15 +7,16 @@ using System.Text.Json;
 
 namespace invoice_v1.src.Application.Services
 {
+    /// <summary>
+    /// Job management service with RBAC support.
+    /// UPDATED: Added RBAC filtering for GetJobsAsync and GetJobByIdAsync.
+    /// </summary>
     public class JobService : IJobService
     {
         private readonly IJobRepository jobRepository;
         private readonly ILogger<JobService> logger;
-        private const int MaxRetries = 3;
 
-        public JobService(
-            IJobRepository jobRepository,
-            ILogger<JobService> logger)
+        public JobService(IJobRepository jobRepository, ILogger<JobService> logger)
         {
             this.jobRepository = jobRepository;
             this.logger = logger;
@@ -28,46 +29,71 @@ namespace invoice_v1.src.Application.Services
                 fileId = log.FileId,
                 originalName = log.FileName,
                 mimeType = log.MimeType,
-                fileSize = log.FileSize,
-                modifiedBy = log.ModifiedBy,
-                detectedAt = log.DetectedAt
+                modifiedBy = log.ModifiedBy
             };
 
             var job = new JobQueue
             {
                 Id = Guid.NewGuid(),
-                JobType = "INVOICE_EXTRACTION",
+                JobType = "EXTRACT_INVOICE",
                 PayloadJson = JsonSerializer.Serialize(payload),
                 Status = "PENDING",
-                RetryCount = 0,
                 CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
-                NextRetryAt = null
+                UpdatedAt = DateTime.UtcNow
             };
 
-            await jobRepository.CreateAsync(job);
+            await jobRepository.CreateJobAsync(job);
+
             logger.LogInformation("Created job {JobId} for file {FileId}", job.Id, log.FileId);
 
             return MapToDto(job);
         }
 
-        public async Task<JobDto?> GetJobByIdAsync(Guid jobId)
+        public async Task<JobDto?> GetJobByIdAsync(Guid jobId, string? userEmail = null, bool isAdmin = false)
         {
             var job = await jobRepository.GetByIdAsync(jobId);
-            return job != null ? MapToDto(job) : null;
+
+            if (job == null)
+            {
+                return null;
+            }
+
+            // RBAC: Non-admins can only access their own jobs
+            if (!isAdmin && !string.IsNullOrWhiteSpace(userEmail))
+            {
+                var jobVendorEmail = ExtractVendorEmailFromJob(job);
+                if (!string.IsNullOrWhiteSpace(jobVendorEmail) &&
+                    !jobVendorEmail.Equals(userEmail, StringComparison.OrdinalIgnoreCase))
+                {
+                    logger.LogWarning("User {UserEmail} attempted to access job {JobId} belonging to {JobVendorEmail}",
+                        userEmail, jobId, jobVendorEmail);
+                    return null; // Return null (404) instead of throwing exception
+                }
+            }
+
+            return MapToDto(job);
         }
 
         public async Task<(List<JobDto> Jobs, int Total)> GetJobsAsync(
-            JobStatus? status, int page, int pageSize)
+            JobStatus? status,
+            int page,
+            int pageSize,
+            string? userEmail = null,
+            bool isAdmin = false)
         {
-            if (page < 1) page = 1;
-            if (pageSize < 1 || pageSize > 100) pageSize = 50;
+            // RBAC: Non-admins only see their own jobs
+            var vendorEmailFilter = isAdmin ? null : userEmail;
 
             var skip = (page - 1) * pageSize;
-            var jobs = await jobRepository.GetAllAsync(status, skip, pageSize);
-            var total = await jobRepository.GetCountAsync(status);
+
+            var (jobs, total) = await jobRepository.GetJobsAsync(
+                status,
+                skip,
+                pageSize,
+                vendorEmailFilter);
 
             var jobDtos = jobs.Select(MapToDto).ToList();
+
             return (jobDtos, total);
         }
 
@@ -75,7 +101,9 @@ namespace invoice_v1.src.Application.Services
         {
             var job = await jobRepository.GetByIdAsync(jobId);
             if (job == null)
+            {
                 throw new InvalidOperationException($"Job {jobId} not found");
+            }
 
             job.Status = "PROCESSING";
             job.LockedBy = workerId;
@@ -83,14 +111,17 @@ namespace invoice_v1.src.Application.Services
             job.UpdatedAt = DateTime.UtcNow;
 
             await jobRepository.UpdateJobAsync(job);
-            logger.LogInformation("Job {JobId} locked by worker {WorkerId}", jobId, workerId);
+
+            logger.LogInformation("Job {JobId} marked as PROCESSING by worker {WorkerId}", jobId, workerId);
         }
 
         public async Task MarkCompletedAsync(Guid jobId, object result)
         {
             var job = await jobRepository.GetByIdAsync(jobId);
             if (job == null)
+            {
                 throw new InvalidOperationException($"Job {jobId} not found");
+            }
 
             job.Status = "COMPLETED";
             job.UpdatedAt = DateTime.UtcNow;
@@ -98,6 +129,7 @@ namespace invoice_v1.src.Application.Services
             job.LockedAt = null;
 
             await jobRepository.UpdateJobAsync(job);
+
             logger.LogInformation("Job {JobId} marked as COMPLETED", jobId);
         }
 
@@ -105,7 +137,9 @@ namespace invoice_v1.src.Application.Services
         {
             var job = await jobRepository.GetByIdAsync(jobId);
             if (job == null)
+            {
                 throw new InvalidOperationException($"Job {jobId} not found");
+            }
 
             job.Status = "INVALID";
             job.ErrorMessage = reason;
@@ -114,69 +148,56 @@ namespace invoice_v1.src.Application.Services
             job.LockedAt = null;
 
             await jobRepository.UpdateJobAsync(job);
+
             logger.LogWarning("Job {JobId} marked as INVALID: {Reason}", jobId, reason);
         }
 
-        /// <summary>
-        /// UPDATED: Now includes exponential backoff logic
-        /// </summary>
         public async Task MarkFailedAsync(Guid jobId, string errorMessage)
         {
             var job = await jobRepository.GetByIdAsync(jobId);
             if (job == null)
+            {
                 throw new InvalidOperationException($"Job {jobId} not found");
+            }
 
+            job.Status = "FAILED";
             job.RetryCount++;
             job.ErrorMessage = errorMessage;
+            job.NextRetryAt = CalculateNextRetry(job.RetryCount);
             job.UpdatedAt = DateTime.UtcNow;
             job.LockedBy = null;
             job.LockedAt = null;
 
-            if (job.RetryCount >= MaxRetries)
-            {
-                // Permanently failed after max retries
-                job.Status = "FAILED";
-                job.NextRetryAt = null;
-
-                logger.LogError(
-                    "Job {JobId} permanently FAILED after {RetryCount} attempts. Error: {Error}",
-                    jobId, job.RetryCount, errorMessage);
-            }
-            else
-            {
-                // Calculate exponential backoff: 2^retryCount minutes
-                var delayMinutes = Math.Pow(2, job.RetryCount);
-                job.NextRetryAt = DateTime.UtcNow.AddMinutes(delayMinutes);
-                job.Status = "PENDING";
-
-                logger.LogWarning(
-                    "Job {JobId} marked as FAILED (attempt {RetryCount}/{MaxRetries}). " +
-                    "Will retry at {NextRetryAt} (in {DelayMinutes} minutes). Error: {Error}",
-                    jobId, job.RetryCount, MaxRetries, job.NextRetryAt, delayMinutes, errorMessage);
-            }
-
             await jobRepository.UpdateJobAsync(job);
+
+            logger.LogWarning("Job {JobId} marked as FAILED (retry {RetryCount}): {ErrorMessage}",
+                jobId, job.RetryCount, errorMessage);
         }
 
         public async Task RequeueJobAsync(Guid jobId)
         {
             var job = await jobRepository.GetByIdAsync(jobId);
             if (job == null)
+            {
                 throw new InvalidOperationException($"Job {jobId} not found");
+            }
 
             if (job.Status != "FAILED" && job.Status != "INVALID")
-                throw new InvalidOperationException($"Only FAILED or INVALID jobs can be requeued");
+            {
+                throw new InvalidOperationException($"Only FAILED or INVALID jobs can be requeued. Current status: {job.Status}");
+            }
 
             job.Status = "PENDING";
             job.RetryCount = 0;
             job.ErrorMessage = null;
-            job.LockedBy = null;
-            job.LockedAt = null;
             job.NextRetryAt = null;
             job.UpdatedAt = DateTime.UtcNow;
+            job.LockedBy = null;
+            job.LockedAt = null;
 
             await jobRepository.UpdateJobAsync(job);
-            logger.LogInformation("Job {JobId} requeued successfully", jobId);
+
+            logger.LogInformation("Job {JobId} requeued to PENDING status", jobId);
         }
 
         private JobDto MapToDto(JobQueue job)
@@ -208,6 +229,36 @@ namespace invoice_v1.src.Application.Services
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt
             };
+        }
+
+        private string? ExtractVendorEmailFromJob(JobQueue job)
+        {
+            if (string.IsNullOrWhiteSpace(job.PayloadJson))
+            {
+                return null;
+            }
+
+            try
+            {
+                var payload = JsonSerializer.Deserialize<JsonElement>(job.PayloadJson);
+                if (payload.TryGetProperty("modifiedBy", out var modifiedByElement))
+                {
+                    return modifiedByElement.GetString();
+                }
+            }
+            catch
+            {
+                // Ignore parsing errors
+            }
+
+            return null;
+        }
+
+        private DateTime? CalculateNextRetry(int retryCount)
+        {
+            // Exponential backoff: 2^retryCount minutes
+            var delayMinutes = Math.Pow(2, retryCount);
+            return DateTime.UtcNow.AddMinutes(delayMinutes);
         }
     }
 }

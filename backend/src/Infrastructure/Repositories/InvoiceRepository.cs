@@ -107,6 +107,65 @@ namespace invoice_v1.src.Infrastructure.Repositories
                 .ToListAsync();
         }
 
+        //  RBAC-aware query method
+        public async Task<List<Invoice>> GetByVendorEmailAsync(
+            string? vendorEmail,
+            int skip,
+            int take,
+            bool includeLineItems = false,
+            bool isAdmin = false)
+        {
+            var query = context.Invoices.AsNoTracking();
+
+            if (includeLineItems)
+            {
+                query = query
+                    .Include(i => i.LineItems)
+                    .ThenInclude(l => l.Product);
+            }
+
+            // RBAC filtering
+            if (!isAdmin)
+            {
+                if (string.IsNullOrWhiteSpace(vendorEmail))
+                {
+                    return new List<Invoice>();
+                }
+                query = query.Where(i => i.VendorEmail == vendorEmail);
+            }
+            else if (!string.IsNullOrWhiteSpace(vendorEmail))
+            {
+                query = query.Where(i => i.VendorEmail == vendorEmail);
+            }
+
+            return await query
+                .OrderByDescending(i => i.CreatedAt)
+                .Skip(skip)
+                .Take(take)
+                .ToListAsync();
+        }
+
+        //  RBAC-aware count method
+        public async Task<int> GetCountByVendorEmailAsync(string? vendorEmail, bool isAdmin = false)
+        {
+            var query = context.Invoices.AsQueryable();
+
+            if (!isAdmin)
+            {
+                if (string.IsNullOrWhiteSpace(vendorEmail))
+                {
+                    return 0;
+                }
+                query = query.Where(i => i.VendorEmail == vendorEmail);
+            }
+            else if (!string.IsNullOrWhiteSpace(vendorEmail))
+            {
+                query = query.Where(i => i.VendorEmail == vendorEmail);
+            }
+
+            return await query.CountAsync();
+        }
+
         public async Task<int> GetCountAsync()
         {
             return await context.Invoices.CountAsync();

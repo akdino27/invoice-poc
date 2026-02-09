@@ -4,6 +4,10 @@ namespace invoice_v1.src.Application.Interfaces
 {
     public interface ILogService
     {
-        Task<(List<FileChangeLogDto> Logs, int Total)> GetLogsAsync(int page, int pageSize);
+        Task<(List<FileChangeLogDto> Logs, int Total)> GetLogsAsync(
+            int page,
+            int pageSize,
+            string? userEmail = null,
+            bool isAdmin = false);
     }
 }

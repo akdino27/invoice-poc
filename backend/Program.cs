@@ -1,211 +1,220 @@
+﻿using invoice_v1.src.Api.Filters;
+using invoice_v1.src.Api.Middleware;
 using invoice_v1.src.Application.BackgroundServices;
 using invoice_v1.src.Application.Interfaces;
 using invoice_v1.src.Application.Services;
 using invoice_v1.src.Infrastructure.Data;
 using invoice_v1.src.Infrastructure.Repositories;
-using invoice_v1.src.Services;
 using Microsoft.EntityFrameworkCore;
-using Serilog;
 
-var builder = WebApplication.CreateBuilder(args);
-
-
-// SERILOG CONFIGURATION
-
-Log.Logger = new LoggerConfiguration()
-    .ReadFrom.Configuration(builder.Configuration)
-    .Enrich.FromLogContext()
-    .WriteTo.Console()
-    .WriteTo.File(
-        path: "logs/invoice-v1-.txt",
-        rollingInterval: RollingInterval.Day,
-        retainedFileCountLimit: 30,
-        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
-    .CreateLogger();
-
-builder.Host.UseSerilog();
-
-Log.Information("Starting Invoice Processing Backend V2");
-
-
-// DATABASE CONFIGURATION
-
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
-
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
+namespace invoice_v1
 {
-    options.UseSqlServer(connectionString, sqlOptions =>
+    public class Program
     {
-        sqlOptions.EnableRetryOnFailure(
-            maxRetryCount: 5,
-            maxRetryDelay: TimeSpan.FromSeconds(30),
-            errorNumbersToAdd: null);
-        sqlOptions.CommandTimeout(120);
-    });
-});
-
-
-// REPOSITORIES (Data Access Layer)
-builder.Services.AddScoped<IJobRepository, JobRepository>();
-builder.Services.AddScoped<IInvalidInvoiceRepository, InvalidInvoiceRepository>();
-builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
-builder.Services.AddScoped<IProductRepository, ProductRepository>();
-builder.Services.AddScoped<IInvoiceLineRepository, InvoiceLineRepository>();
-builder.Services.AddScoped<IFileChangeLogRepository, FileChangeLogRepository>();
-
-// SERVICES (Business Logic Layer)
-builder.Services.AddScoped<IJobService, JobService>();
-builder.Services.AddScoped<IInvoiceService, InvoiceService>();
-builder.Services.AddScoped<IInvalidInvoiceService, InvalidInvoiceService>();
-builder.Services.AddScoped<ICallbackService, CallbackService>();
-builder.Services.AddScoped<ILogService, LogService>();
-builder.Services.AddScoped<IProductService, ProductService>();
-builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
-builder.Services.AddScoped<IHmacValidator, HmacValidator>();
-
-// BACKGROUND SERVICES
-builder.Services.AddHostedService<DriveMonitoringService>();
-builder.Services.AddHostedService<JobCreationService>();
-
-// GOOGLE DRIVE
-builder.Services.AddSingleton<IGoogleDriveService, GoogleDriveService>();
-
-
-
-// CORS CONFIGURATION
-
-var allowedOrigins = builder.Configuration["Cors:AllowedOrigins"]?.Split(',')
-    ?? new[] { "http://localhost:4200" };
-
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowFrontend", policy =>
-    {
-        policy.WithOrigins(allowedOrigins)
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
-    });
-});
-
-
-// CONTROLLERS AND SWAGGER
-
-builder.Services.AddControllers()
-    .AddJsonOptions(options =>
-    {
-        options.JsonSerializerOptions.PropertyNamingPolicy = null; // PascalCase
-        options.JsonSerializerOptions.WriteIndented = true;
-    });
-
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(c =>
-{
-    c.SwaggerDoc("v1", new()
-    {
-        Title = "Invoice Processing API V2",
-        Version = "v2.0",
-        Description = "Backend API for invoice extraction and analytics",
-        Contact = new()
+        public static void Main(string[] args)
         {
-            Name = "Support",
-            Email = "support@example.com"
+            var builder = WebApplication.CreateBuilder(args);
+
+            //Validate critical configuration at startup
+            ValidateConfiguration(builder.Configuration);
+
+            // Add services to the container
+            ConfigureServices(builder.Services, builder.Configuration);
+
+            var app = builder.Build();
+
+            // Configure the HTTP request pipeline
+            ConfigurePipeline(app);
+
+            app.Run();
         }
-    });
 
-    // Add XML comments if available
-    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
-    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
-    if (File.Exists(xmlPath))
-    {
-        c.IncludeXmlComments(xmlPath);
+        private static void ValidateConfiguration(IConfiguration configuration)
+        {
+            var errors = new List<string>();
+
+            // Validate callback secret
+            var callbackSecret = configuration["Security:CallbackSecret"];
+            if (string.IsNullOrWhiteSpace(callbackSecret))
+            {
+                errors.Add("Security:CallbackSecret is not configured. Set AI_CALLBACK_SECRET environment variable.");
+            }
+
+            // Validate admin API key
+            var adminApiKey = configuration["Security:AdminApiKey"];
+            if (string.IsNullOrWhiteSpace(adminApiKey))
+            {
+                errors.Add("Security:AdminApiKey is not configured. Set ADMIN_API_KEY environment variable.");
+            }
+
+            // Validate admin emails
+            var adminEmails = configuration.GetSection("Security:AdminEmails").Get<List<string>>();
+            if (adminEmails == null || adminEmails.Count == 0)
+            {
+                errors.Add("Security:AdminEmails is not configured. At least one admin email is required.");
+            }
+            else
+            {
+                // Validate email format
+                foreach (var email in adminEmails)
+                {
+                    if (string.IsNullOrWhiteSpace(email) || !email.Contains("@"))
+                    {
+                        errors.Add($"Invalid admin email format: '{email}'");
+                    }
+                }
+            }
+
+            // Validate database connection string
+            var connectionString = configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                errors.Add("Database connection string 'DefaultConnection' is not configured.");
+            }
+
+            if (errors.Count > 0)
+            {
+                var errorMessage = "Configuration validation failed:\n" + string.Join("\n", errors);
+                Console.Error.WriteLine(errorMessage);
+                throw new InvalidOperationException(errorMessage);
+            }
+
+            Console.WriteLine("✓ Configuration validation passed");
+        }
+
+        private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
+        {
+            // Database - PostgreSQL
+            services.AddDbContext<ApplicationDbContext>(options =>
+                options.UseNpgsql(
+                    configuration.GetConnectionString("DefaultConnection"),
+                    npgsqlOptions => npgsqlOptions
+                        .EnableRetryOnFailure(
+                            maxRetryCount: 3,
+                            maxRetryDelay: TimeSpan.FromSeconds(10),
+                            errorCodesToAdd: null)));  // FIXED: Added required parameter
+
+            // Controllers
+            services.AddControllers();
+
+            // Swagger/OpenAPI
+            services.AddEndpointsApiExplorer();
+            services.AddSwaggerGen(c =>
+            {
+                c.SwaggerDoc("v1", new() { Title = "Invoice API with RBAC - PostgreSQL", Version = "v1" });
+
+                // Add header parameters for Swagger UI testing
+                c.AddSecurityDefinition("UserEmail", new()
+                {
+                    In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+                    Name = "X-User-Email",
+                    Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
+                    Description = "User email for RBAC (e.g., vendor1@test.com)"
+                });
+
+                c.AddSecurityDefinition("UserRole", new()
+                {
+                    In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+                    Name = "X-User-Role",
+                    Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
+                    Description = "User role: 'vendor' or 'admin'"
+                });
+
+                c.AddSecurityRequirement(new()
+                {
+                    {
+                        new()
+                        {
+                            Reference = new()
+                            {
+                                Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                                Id = "UserEmail"
+                            }
+                        },
+                        Array.Empty<string>()
+                    }
+                });
+            });
+
+            // CORS (if needed)
+            services.AddCors(options =>
+            {
+                options.AddDefaultPolicy(policy =>
+                {
+                    policy.AllowAnyOrigin()
+                          .AllowAnyMethod()
+                          .AllowAnyHeader();
+                });
+            });
+
+            //Register RBAC Action Filter
+            services.AddScoped<RbacActionFilter>();
+
+            // Repositories
+            services.AddScoped<IInvoiceRepository, InvoiceRepository>();
+            services.AddScoped<IProductRepository, ProductRepository>();
+            services.AddScoped<IJobRepository, JobRepository>();
+            services.AddScoped<IFileChangeLogRepository, FileChangeLogRepository>();
+            services.AddScoped<IVendorRepository, VendorRepository>();
+            services.AddScoped<IInvalidInvoiceRepository, InvalidInvoiceRepository>();
+
+            // Services
+            services.AddScoped<IInvoiceService, InvoiceService>();
+            services.AddScoped<IProductService, ProductService>();
+            services.AddScoped<IJobService, JobService>();
+            services.AddScoped<ICallbackService, CallbackService>();
+            services.AddScoped<IAnalyticsService, AnalyticsService>();
+            services.AddScoped<IVendorService, VendorService>();
+            services.AddScoped<ILogService, LogService>();
+            services.AddScoped<IInvalidInvoiceService, InvalidInvoiceService>();
+            services.AddScoped<IHmacValidator, HmacValidator>();
+
+            // Background Services
+            services.AddHostedService<JobCreationService>();
+
+            // Logging
+            services.AddLogging(logging =>
+            {
+                logging.AddConsole();
+                logging.AddDebug();
+            });
+        }
+
+        private static void ConfigurePipeline(WebApplication app)
+        {
+            //Add exception handling middleware first
+            app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+            if (app.Environment.IsDevelopment())
+            {
+                app.UseSwagger();
+                app.UseSwaggerUI(c =>
+                {
+                    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Invoice API v1");
+                    c.RoutePrefix = string.Empty; // Swagger at root
+                });
+            }
+
+            app.UseHttpsRedirection();
+
+            app.UseCors();
+
+            app.UseAuthorization();
+
+            app.MapControllers();
+
+            // Health check endpoint
+            app.MapGet("/health", () => new
+            {
+                status = "healthy",
+                timestamp = DateTime.UtcNow,
+                version = "2.0-RBAC-PostgreSQL",
+                database = "PostgreSQL"
+            });
+
+            Console.WriteLine("✓ Application configured successfully");
+            Console.WriteLine("✓ RBAC is enabled on all protected endpoints");
+            Console.WriteLine("✓ Using PostgreSQL database with JSONB support");
+        }
     }
-
-    // Add security definition for API Key
-    c.AddSecurityDefinition("ApiKey", new()
-    {
-        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
-        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
-        Name = "X-Api-Key",
-        Description = "API Key for admin endpoints"
-    });
-});
-
-
-// BUILD APPLICATION
-
-var app = builder.Build();
-
-
-// MIDDLEWARE PIPELINE
-
-
-// Exception handling
-app.UseMiddleware<invoice_v1.src.Api.Middleware.ExceptionHandlingMiddleware>();
-
-// Swagger (enable in development, disable in production)
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Invoice API V2");
-        c.RoutePrefix = "swagger";
-    });
-}
-
-// Request logging
-app.UseSerilogRequestLogging(options =>
-{
-    options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
-    {
-        diagnosticContext.Set("RequestHost", httpContext.Request.Host.Value);
-        diagnosticContext.Set("RequestScheme", httpContext.Request.Scheme);
-        diagnosticContext.Set("RemoteIpAddress", httpContext.Connection.RemoteIpAddress);
-    };
-});
-
-// HTTPS redirection (disable for local Docker, enable for production)
-if (!app.Environment.IsDevelopment())
-{
-    app.UseHttpsRedirection();
-}
-
-// CORS
-app.UseCors("AllowFrontend");
-
-// Authorization (for future JWT implementation)
-app.UseAuthorization();
-
-// Map controllers
-app.MapControllers();
-
-// Health check endpoint
-app.MapGet("/health", () => Results.Ok(new
-{
-    Status = "Healthy",
-    Timestamp = DateTime.UtcNow,
-    Version = "2.0",
-    Environment = app.Environment.EnvironmentName
-}));
-
-// Root endpoint
-app.MapGet("/", () => Results.Redirect("/swagger"));
-
-
-try
-{
-    Log.Information("Invoice Processing Backend V2 is starting");
-    app.Run();
-    Log.Information("Invoice Processing Backend V2 stopped cleanly");
-}
-catch (Exception ex)
-{
-    Log.Fatal(ex, "Invoice Processing Backend V2 terminated unexpectedly");
-    throw;
-}
-finally
-{
-    Log.CloseAndFlush();
 }

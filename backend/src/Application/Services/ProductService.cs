@@ -1,5 +1,4 @@
-﻿using invoice_v1.src.Api.Controllers;
-using invoice_v1.src.Application.DTOs;
+﻿using invoice_v1.src.Application.DTOs;
 using invoice_v1.src.Application.Interfaces;
 using invoice_v1.src.Infrastructure.Repositories;
 
@@ -22,19 +21,32 @@ namespace invoice_v1.src.Application.Services
             string? category,
             string? search,
             int page,
-            int pageSize)
+            int pageSize,
+            string userEmail,
+            bool isAdmin = false)
         {
-            if (page < 1) page = 1;
-            if (pageSize < 1 || pageSize > 100) pageSize = 50;
-
             var skip = (page - 1) * pageSize;
 
-            var products = await productRepository.GetProductsAsync(category, search, skip, pageSize);
-            var total = await productRepository.GetProductCountAsync(category, search);
+            var vendorEmail = isAdmin ? null : userEmail;
+
+            var products = await productRepository.GetProductsAsync(
+                vendorEmail,
+                category,
+                search,
+                skip,
+                pageSize,
+                isAdmin);
+
+            var total = await productRepository.GetProductCountAsync(
+                vendorEmail,
+                category,
+                search,
+                isAdmin);
 
             var productDtos = products.Select(p => new ProductDto
             {
                 Id = p.Id,
+                VendorEmail = p.VendorEmail,
                 ProductId = p.ProductId,
                 ProductName = p.ProductName,
                 Category = p.Category,
@@ -49,6 +61,12 @@ namespace invoice_v1.src.Application.Services
                 UpdatedAt = p.UpdatedAt
             }).ToList();
 
+            logger.LogInformation(
+                "Retrieved {Count} products for user {UserEmail} (Admin: {IsAdmin})",
+                productDtos.Count,
+                userEmail,
+                isAdmin);
+
             return new ProductListResponse
             {
                 Products = productDtos,
@@ -59,15 +77,26 @@ namespace invoice_v1.src.Application.Services
             };
         }
 
-        public async Task<ProductDto?> GetProductByIdAsync(Guid id)
+        public async Task<ProductDto?> GetProductByIdAsync(Guid id, string userEmail, bool isAdmin = false)
         {
             var product = await productRepository.GetByIdAsync(id);
+
             if (product == null)
+            {
                 return null;
+            }
+
+            // RBAC enforcement
+            if (!isAdmin && product.VendorEmail != userEmail)
+            {
+                throw new UnauthorizedAccessException(
+                    $"User {userEmail} is not authorized to access product {id}");
+            }
 
             return new ProductDto
             {
                 Id = product.Id,
+                VendorEmail = product.VendorEmail,
                 ProductId = product.ProductId,
                 ProductName = product.ProductName,
                 Category = product.Category,
@@ -83,15 +112,31 @@ namespace invoice_v1.src.Application.Services
             };
         }
 
-        public async Task<ProductDto?> GetProductByProductIdAsync(string productId)
+        public async Task<ProductDto?> GetProductByProductIdAsync(
+            string productId,
+            string userEmail,
+            bool isAdmin = false)
         {
-            var product = await productRepository.GetByProductIdAsync(productId);
+            var product = isAdmin
+                ? await productRepository.GetByProductIdAsync(productId)
+                : await productRepository.GetByVendorAndProductIdAsync(userEmail, productId);
+
             if (product == null)
+            {
                 return null;
+            }
+
+            // Additional RBAC check for admin accessing specific product
+            if (!isAdmin && product.VendorEmail != userEmail)
+            {
+                throw new UnauthorizedAccessException(
+                    $"User {userEmail} is not authorized to access product {productId}");
+            }
 
             return new ProductDto
             {
                 Id = product.Id,
+                VendorEmail = product.VendorEmail,
                 ProductId = product.ProductId,
                 ProductName = product.ProductName,
                 Category = product.Category,
@@ -107,9 +152,11 @@ namespace invoice_v1.src.Application.Services
             };
         }
 
-        public async Task<List<CategoryDto>> GetCategoriesAsync()
+        public async Task<List<CategoryDto>> GetCategoriesAsync(string userEmail, bool isAdmin = false)
         {
-            var categories = await productRepository.GetCategoriesAsync();
+            var vendorEmail = isAdmin ? null : userEmail;
+
+            var categories = await productRepository.GetCategoriesAsync(vendorEmail, isAdmin);
 
             return categories.Select(c => new CategoryDto
             {

@@ -17,30 +17,37 @@ namespace invoice_v1.src.Application.Services
             this.logger = logger;
         }
 
-        public async Task<(List<FileChangeLogDto> Logs, int Total)> GetLogsAsync(int page, int pageSize)
+        public async Task<(List<FileChangeLogDto> Logs, int Total)> GetLogsAsync(
+            int page,
+            int pageSize,
+            string? userEmail = null,
+            bool isAdmin = false)
         {
-            if (page < 1) page = 1;
-            if (pageSize < 1 || pageSize > 100) pageSize = 50;
-
             var skip = (page - 1) * pageSize;
-            var logs = await fileChangeLogRepository.GetAllAsync(skip, pageSize);
-            var total = await fileChangeLogRepository.GetCountAsync();
 
-            var logDtos = logs.Select(l => new FileChangeLogDto
+            // RBAC: Filter by ModifiedBy for non-admins
+            var vendorEmailFilter = isAdmin ? null : userEmail;
+
+            var (logs, total) = await fileChangeLogRepository.GetLogsAsync(
+                skip,
+                pageSize,
+                vendorEmailFilter);
+
+            var dtos = logs.Select(log => new FileChangeLogDto
             {
-                Id = l.Id,  // Already Guid now
-                FileName = l.FileName,
-                FileId = l.FileId,
-                ChangeType = l.ChangeType,
-                DetectedAt = l.DetectedAt,
-                MimeType = l.MimeType,
-                FileSize = l.FileSize,
-                ModifiedBy = l.ModifiedBy,
-                GoogleDriveModifiedTime = l.GoogleDriveModifiedTime,
-                ProcessedAt = l.ProcessedAt
+                Id = log.Id,
+                FileName = log.FileName,
+                FileId = log.FileId,
+                ChangeType = log.ChangeType,
+                DetectedAt = log.DetectedAt,
+                MimeType = log.MimeType,
+                FileSize = log.FileSize,
+                ModifiedBy = log.ModifiedBy,
+                GoogleDriveModifiedTime = log.GoogleDriveModifiedTime,
+                ProcessedAt = log.ProcessedAt
             }).ToList();
 
-            return (logDtos, total);
+            return (dtos, total);
         }
     }
 }

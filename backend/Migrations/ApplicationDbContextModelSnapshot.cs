@@ -2,8 +2,8 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using invoice_v1.src.Infrastructure.Data;
 
 #nullable disable
@@ -18,50 +18,50 @@ namespace invoice_v1.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasAnnotation("ProductVersion", "8.0.11")
-                .HasAnnotation("Relational:MaxIdentifierLength", 128);
+                .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
-            SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
+            NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.FileChangeLog", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uniqueidentifier");
+                        .HasColumnType("uuid");
 
                     b.Property<string>("ChangeType")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                        .HasColumnType("character varying(50)");
 
                     b.Property<DateTime>("DetectedAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("FileId")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("FileName")
                         .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
+                        .HasColumnType("character varying(500)");
 
                     b.Property<long?>("FileSize")
                         .HasColumnType("bigint");
 
                     b.Property<DateTime?>("GoogleDriveModifiedTime")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("MimeType")
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("ModifiedBy")
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .HasColumnType("character varying(200)");
 
                     b.Property<bool>("Processed")
-                        .HasColumnType("bit");
+                        .HasColumnType("boolean");
 
                     b.Property<DateTime?>("ProcessedAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
 
@@ -70,6 +70,9 @@ namespace invoice_v1.Migrations
 
                     b.HasIndex("FileId")
                         .HasDatabaseName("IX_FileChangeLogs_FileId");
+
+                    b.HasIndex("ModifiedBy")
+                        .HasDatabaseName("IX_FileChangeLogs_ModifiedBy");
 
                     b.HasIndex("Processed", "DetectedAt")
                         .HasDatabaseName("IX_FileChangeLogs_Processed_DetectedAt");
@@ -80,27 +83,34 @@ namespace invoice_v1.Migrations
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.InvalidInvoice", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uniqueidentifier");
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("FileId")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("FileName")
                         .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
+                        .HasColumnType("character varying(500)");
 
                     b.Property<string>("Reason")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("text");
+
+                    b.Property<string>("VendorEmail")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.HasKey("Id");
 
                     b.HasIndex("FileId")
                         .HasDatabaseName("IX_InvalidInvoices_FileId");
+
+                    b.HasIndex("VendorEmail")
+                        .HasDatabaseName("IX_InvalidInvoices_VendorEmail");
 
                     b.ToTable("InvalidInvoices", (string)null);
                 });
@@ -108,69 +118,69 @@ namespace invoice_v1.Migrations
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.Invoice", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uniqueidentifier");
+                        .HasColumnType("uuid");
 
                     b.Property<decimal?>("BalanceDue")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("BillToName")
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .HasColumnType("character varying(200)");
 
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Currency")
                         .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)");
+                        .HasColumnType("character varying(10)");
 
                     b.Property<decimal?>("DiscountAmount")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal?>("DiscountPercentage")
-                        .HasColumnType("decimal(18,2)");
+                        .HasColumnType("decimal(5,2)");
 
                     b.Property<string>("DriveFileId")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("ExtractedDataJson")
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("jsonb");
 
                     b.Property<DateTime?>("InvoiceDate")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("InvoiceNumber")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("Notes")
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("text");
 
                     b.Property<string>("OrderId")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("OriginalFileName")
                         .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
+                        .HasColumnType("character varying(500)");
 
                     b.Property<string>("ShipMode")
                         .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                        .HasColumnType("character varying(50)");
 
                     b.Property<string>("ShipToCity")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("ShipToCountry")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("ShipToState")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<decimal?>("ShippingCost")
                         .HasColumnType("decimal(18,2)");
@@ -179,17 +189,22 @@ namespace invoice_v1.Migrations
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("Terms")
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("text");
 
                     b.Property<decimal?>("TotalAmount")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VendorEmail")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("VendorName")
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .HasColumnType("character varying(200)");
 
                     b.HasKey("Id");
 
@@ -203,6 +218,11 @@ namespace invoice_v1.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_Invoices_DriveFileId_Unique");
 
+                    b.HasIndex("ExtractedDataJson")
+                        .HasDatabaseName("IX_Invoices_ExtractedDataJson_Gin");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("ExtractedDataJson"), "gin");
+
                     b.HasIndex("InvoiceDate")
                         .HasDatabaseName("IX_Invoices_InvoiceDate");
 
@@ -212,11 +232,18 @@ namespace invoice_v1.Migrations
                     b.HasIndex("OrderId")
                         .HasDatabaseName("IX_Invoices_OrderId");
 
+                    b.HasIndex("VendorEmail")
+                        .HasDatabaseName("IX_Invoices_VendorEmail");
+
                     b.HasIndex("VendorName")
                         .HasDatabaseName("IX_Invoices_VendorName");
 
                     b.HasIndex("InvoiceDate", "TotalAmount")
                         .HasDatabaseName("IX_Invoices_Date_Amount");
+
+                    b.HasIndex("VendorEmail", "InvoiceNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Invoices_VendorEmail_InvoiceNumber_Unique");
 
                     b.ToTable("Invoices");
                 });
@@ -224,38 +251,41 @@ namespace invoice_v1.Migrations
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.InvoiceLine", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uniqueidentifier");
+                        .HasColumnType("uuid");
 
-                    b.Property<decimal>("Amount")
+                    b.Property<decimal?>("Amount")
+                        .IsRequired()
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("Category")
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .HasColumnType("character varying(200)");
 
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("InvoiceId")
-                        .HasColumnType("uniqueidentifier");
+                        .HasColumnType("uuid");
 
                     b.Property<Guid>("ProductGuid")
-                        .HasColumnType("uniqueidentifier");
+                        .HasColumnType("uuid");
 
                     b.Property<string>("ProductId")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("ProductName")
                         .IsRequired()
                         .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
+                        .HasColumnType("character varying(500)");
 
-                    b.Property<decimal>("Quantity")
+                    b.Property<decimal?>("Quantity")
+                        .IsRequired()
                         .HasColumnType("decimal(18,4)");
 
-                    b.Property<decimal>("UnitRate")
+                    b.Property<decimal?>("UnitRate")
+                        .IsRequired()
                         .HasColumnType("decimal(18,2)");
 
                     b.HasKey("Id");
@@ -280,48 +310,53 @@ namespace invoice_v1.Migrations
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.JobQueue", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uniqueidentifier");
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("ErrorMessage")
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("text");
 
                     b.Property<string>("JobType")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<DateTime?>("LockedAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("LockedBy")
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .HasColumnType("character varying(200)");
 
                     b.Property<DateTime?>("NextRetryAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("PayloadJson")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("jsonb");
 
                     b.Property<int>("RetryCount")
-                        .HasColumnType("int");
+                        .HasColumnType("integer");
 
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                        .HasColumnType("character varying(50)");
 
                     b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
 
                     b.HasIndex("CreatedAt")
                         .HasDatabaseName("IX_JobQueues_CreatedAt");
+
+                    b.HasIndex("PayloadJson")
+                        .HasDatabaseName("IX_JobQueues_PayloadJson_Gin");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("PayloadJson"), "gin");
 
                     b.HasIndex("Status")
                         .HasDatabaseName("IX_JobQueues_Status");
@@ -338,50 +373,55 @@ namespace invoice_v1.Migrations
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.Product", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("uniqueidentifier");
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Category")
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .HasColumnType("character varying(200)");
 
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<decimal?>("DefaultUnitRate")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<int>("InvoiceCount")
-                        .HasColumnType("int");
+                        .HasColumnType("integer");
 
                     b.Property<DateTime?>("LastSoldDate")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("PrimaryCategory")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("ProductId")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("ProductName")
                         .IsRequired()
                         .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
+                        .HasColumnType("character varying(500)");
 
                     b.Property<string>("SecondaryCategory")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("character varying(100)");
 
                     b.Property<decimal>("TotalQuantitySold")
-                        .HasColumnType("decimal(18,4)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("TotalRevenue")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("datetime2");
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VendorEmail")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.HasKey("Id");
 
@@ -395,8 +435,7 @@ namespace invoice_v1.Migrations
                         .HasDatabaseName("IX_Products_PrimaryCategory");
 
                     b.HasIndex("ProductId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_Products_ProductId_Unique");
+                        .HasDatabaseName("IX_Products_ProductId");
 
                     b.HasIndex("TotalQuantitySold")
                         .HasDatabaseName("IX_Products_TotalQuantitySold");
@@ -404,7 +443,62 @@ namespace invoice_v1.Migrations
                     b.HasIndex("TotalRevenue")
                         .HasDatabaseName("IX_Products_TotalRevenue");
 
+                    b.HasIndex("VendorEmail")
+                        .HasDatabaseName("IX_Products_VendorEmail");
+
+                    b.HasIndex("VendorEmail", "ProductId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Products_VendorEmail_ProductId_Unique");
+
                     b.ToTable("Products");
+                });
+
+            modelBuilder.Entity("invoice_v1.src.Domain.Entities.Vendor", b =>
+                {
+                    b.Property<string>("Email")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastActivityAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Email");
+
+                    b.HasIndex("Email")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Vendors_Email");
+
+                    b.HasIndex("LastActivityAt")
+                        .HasDatabaseName("IX_Vendors_LastActivityAt");
+
+                    b.ToTable("Vendors");
+                });
+
+            modelBuilder.Entity("invoice_v1.src.Domain.Entities.InvalidInvoice", b =>
+                {
+                    b.HasOne("invoice_v1.src.Domain.Entities.Vendor", "Vendor")
+                        .WithMany()
+                        .HasForeignKey("VendorEmail");
+
+                    b.Navigation("Vendor");
+                });
+
+            modelBuilder.Entity("invoice_v1.src.Domain.Entities.Invoice", b =>
+                {
+                    b.HasOne("invoice_v1.src.Domain.Entities.Vendor", "Vendor")
+                        .WithMany("Invoices")
+                        .HasForeignKey("VendorEmail")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Vendor");
                 });
 
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.InvoiceLine", b =>
@@ -426,6 +520,17 @@ namespace invoice_v1.Migrations
                     b.Navigation("Product");
                 });
 
+            modelBuilder.Entity("invoice_v1.src.Domain.Entities.Product", b =>
+                {
+                    b.HasOne("invoice_v1.src.Domain.Entities.Vendor", "Vendor")
+                        .WithMany("Products")
+                        .HasForeignKey("VendorEmail")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Vendor");
+                });
+
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.Invoice", b =>
                 {
                     b.Navigation("LineItems");
@@ -434,6 +539,13 @@ namespace invoice_v1.Migrations
             modelBuilder.Entity("invoice_v1.src.Domain.Entities.Product", b =>
                 {
                     b.Navigation("InvoiceLines");
+                });
+
+            modelBuilder.Entity("invoice_v1.src.Domain.Entities.Vendor", b =>
+                {
+                    b.Navigation("Invoices");
+
+                    b.Navigation("Products");
                 });
 #pragma warning restore 612, 618
         }

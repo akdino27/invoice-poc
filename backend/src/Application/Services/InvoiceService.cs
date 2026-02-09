@@ -10,257 +10,287 @@ namespace invoice_v1.src.Application.Services
 {
     public class InvoiceService : IInvoiceService
     {
+        // ApplicationDbContext ONLY for transaction management
         private readonly ApplicationDbContext context;
         private readonly IInvoiceRepository invoiceRepository;
         private readonly IProductRepository productRepository;
+        private readonly IJobRepository jobRepository;
+        private readonly IVendorService vendorService;
         private readonly ILogger<InvoiceService> logger;
 
         public InvoiceService(
-            ApplicationDbContext context,
+            ApplicationDbContext context, //  ONLY for transactions
             IInvoiceRepository invoiceRepository,
             IProductRepository productRepository,
+            IJobRepository jobRepository,
+            IVendorService vendorService,
             ILogger<InvoiceService> logger)
         {
             this.context = context;
             this.invoiceRepository = invoiceRepository;
             this.productRepository = productRepository;
+            this.jobRepository = jobRepository;
+            this.vendorService = vendorService;
             this.logger = logger;
         }
 
         public async Task<InvoiceDto> CreateOrUpdateInvoiceFromCallbackAsync(Guid jobId, object result)
         {
-            var resultJson = JsonSerializer.Serialize(result);
-            var extractedData = JsonSerializer.Deserialize<JsonElement>(resultJson);
+            var job = await jobRepository.GetByIdAsync(jobId);
+            if (job == null)
+            {
+                throw new InvalidOperationException($"Job {jobId} not found");
+            }
+
+            string? vendorEmail = null;
+
+            if (!string.IsNullOrWhiteSpace(job.PayloadJson))
+            {
+                try
+                {
+                    var payloadObj = JsonSerializer.Deserialize<JsonElement>(job.PayloadJson);
+                    if (payloadObj.TryGetProperty("modifiedBy", out var modifiedByElement))
+                    {
+                        vendorEmail = modifiedByElement.GetString();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Error extracting vendor email from job payload");
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(vendorEmail))
+            {
+                vendorEmail = "unknown@system.local";
+                logger.LogWarning("No vendor email found in job {JobId}, using default", jobId);
+            }
+
+            await vendorService.GetOrCreateVendorAsync(vendorEmail);
+
+            var extractedData = result as JsonElement? ?? JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(result));
 
             ValidateCriticalFields(extractedData);
 
-            var job = await context.JobQueues.FindAsync(jobId);
-            if (job == null)
-                throw new InvalidOperationException($"Job {jobId} not found");
+            var driveFileId = GetStringProperty(extractedData, "DriveFileId") ?? GetStringProperty(extractedData, "fileId");
+            if (string.IsNullOrWhiteSpace(driveFileId))
+            {
+                if (!string.IsNullOrWhiteSpace(job.PayloadJson))
+                {
+                    try
+                    {
+                        var payloadObj = JsonSerializer.Deserialize<JsonElement>(job.PayloadJson);
+                        driveFileId = payloadObj.TryGetProperty("fileId", out var fid) ? fid.GetString() : null;
+                    }
+                    catch { }
+                }
+            }
 
-            var payload = JsonSerializer.Deserialize<JsonElement>(job.PayloadJson);
-            var fileId = payload.GetProperty("fileId").GetString()
-                ?? throw new InvalidOperationException("FileId not found in job payload");
-            var fileName = GetStringProperty(payload, "originalName");
+            if (string.IsNullOrWhiteSpace(driveFileId))
+            {
+                throw new InvalidOperationException("DriveFileId is required but missing from result");
+            }
 
-            //Use a fresh query with no tracking to avoid concurrency issues
-            var existingInvoice = await context.Invoices
-                .AsNoTracking()
-                .Include(i => i.LineItems)
-                .FirstOrDefaultAsync(i => i.DriveFileId == fileId);
-
-            Invoice invoice;
-            bool isUpdate = false;
+            var existingInvoice = await invoiceRepository.GetByFileIdAsync(driveFileId, includeLineItems: true);
 
             if (existingInvoice != null)
             {
-                // UPDATE EXISTING INVOICE
-                logger.LogInformation("Updating existing invoice {InvoiceId} for file {FileId}",
-                    existingInvoice.Id, fileId);
-
-                // Delete existing line items in a separate operation
-                var existingLineItemIds = await context.InvoiceLines
-                    .Where(il => il.InvoiceId == existingInvoice.Id)
-                    .Select(il => il.Id)
-                    .ToListAsync();
-
-                if (existingLineItemIds.Any())
-                {
-                    await context.Database.ExecuteSqlRawAsync(
-                        "DELETE FROM InvoiceLines WHERE InvoiceId = {0}",
-                        existingInvoice.Id);
-
-                    logger.LogDebug("Deleted {Count} existing line items for invoice {InvoiceId}",
-                        existingLineItemIds.Count, existingInvoice.Id);
-                }
-
-                // Create a new tracked instance
-                invoice = await context.Invoices.FindAsync(existingInvoice.Id);
-                if (invoice == null)
-                    throw new InvalidOperationException($"Invoice {existingInvoice.Id} not found");
-
-                invoice.LineItems.Clear();
-                invoice.UpdatedAt = DateTime.UtcNow;
-                isUpdate = true;
+                logger.LogInformation("Updating existing invoice {InvoiceId} for file {FileId}", existingInvoice.Id, driveFileId);
+                await UpdateInvoiceFromDataAsync(existingInvoice, extractedData, vendorEmail);
+                return await MapToDtoAsync(existingInvoice);
             }
             else
             {
-                // CREATE NEW INVOICE
-                logger.LogInformation("Creating new invoice for file {FileId}", fileId);
-
-                invoice = new Invoice
-                {
-                    Id = Guid.NewGuid(),
-                    DriveFileId = fileId,
-                    OriginalFileName = fileName,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-
-                context.Invoices.Add(invoice);
-                isUpdate = false;
+                logger.LogInformation("Creating new invoice for file {FileId}, vendor {VendorEmail}", driveFileId, vendorEmail);
+                var newInvoice = await CreateInvoiceFromDataAsync(extractedData, driveFileId, vendorEmail);
+                return await MapToDtoAsync(newInvoice);
             }
+        }
 
-            // Map all fields (same for both create and update)
-            invoice.InvoiceNumber = GetStringProperty(extractedData, "InvoiceNumber");
-            invoice.OrderId = GetStringProperty(extractedData, "OrderId");
-            invoice.VendorName = GetStringProperty(extractedData, "VendorName");
-            invoice.ShipMode = GetStringProperty(extractedData, "ShipMode");
-            invoice.Currency = GetStringProperty(extractedData, "Currency") ?? "USD";
-            invoice.Notes = GetStringProperty(extractedData, "Notes");
-            invoice.Terms = GetStringProperty(extractedData, "Terms");
-            invoice.InvoiceDate = GetDateTimeProperty(extractedData, "InvoiceDate");
-
-            if (extractedData.TryGetProperty("BillTo", out var billToElement) &&
-                billToElement.ValueKind == JsonValueKind.Object)
+        public async Task<InvoiceDto?> GetInvoiceByIdAsync(Guid id, string userEmail, bool isAdmin = false)
+        {
+            //  USE REPOSITORY
+            var invoice = await invoiceRepository.GetByIdAsync(id, includeLineItems: true);
+            if (invoice == null)
             {
-                invoice.BillToName = GetStringProperty(billToElement, "Name");
+                return null;
             }
-            else
+
+            if (!isAdmin && invoice.VendorEmail != userEmail)
             {
-                invoice.BillToName = null;
+                throw new UnauthorizedAccessException($"User {userEmail} is not authorized to access invoice {id}");
             }
-
-            if (extractedData.TryGetProperty("ShipTo", out var shipToElement) &&
-                shipToElement.ValueKind == JsonValueKind.Object)
-            {
-                invoice.ShipToCity = GetStringProperty(shipToElement, "City");
-                invoice.ShipToState = GetStringProperty(shipToElement, "State");
-                invoice.ShipToCountry = GetStringProperty(shipToElement, "Country");
-            }
-            else
-            {
-                invoice.ShipToCity = null;
-                invoice.ShipToState = null;
-                invoice.ShipToCountry = null;
-            }
-
-            invoice.Subtotal = GetDecimalProperty(extractedData, "Subtotal");
-            invoice.ShippingCost = GetDecimalProperty(extractedData, "ShippingCost");
-            invoice.TotalAmount = GetDecimalProperty(extractedData, "TotalAmount");
-            invoice.BalanceDue = GetDecimalProperty(extractedData, "BalanceDue");
-
-            if (extractedData.TryGetProperty("Discount", out var discountElement) &&
-                discountElement.ValueKind == JsonValueKind.Object)
-            {
-                invoice.DiscountPercentage = GetDecimalProperty(discountElement, "Percentage");
-                invoice.DiscountAmount = GetDecimalProperty(discountElement, "Amount");
-            }
-            else
-            {
-                invoice.DiscountPercentage = null;
-                invoice.DiscountAmount = null;
-            }
-
-            invoice.ExtractedDataJson = resultJson;
-
-            if (!extractedData.TryGetProperty("LineItems", out var lineItemsElement) ||
-                lineItemsElement.ValueKind != JsonValueKind.Array)
-                throw new InvalidOperationException("LineItems array is required");
-
-            var lineItemsArray = lineItemsElement.EnumerateArray().ToList();
-            if (lineItemsArray.Count == 0)
-                throw new InvalidOperationException("Invoice must have at least one line item");
-
-            var processedProducts = new HashSet<Guid>();
-
-            foreach (var lineElement in lineItemsArray)
-            {
-                var productId = GetStringProperty(lineElement, "ProductId");
-                if (string.IsNullOrWhiteSpace(productId))
-                {
-                    logger.LogWarning("Skipping line item with missing ProductId");
-                    continue;
-                }
-
-                var productName = GetStringProperty(lineElement, "ProductName") ?? "Unknown";
-                var category = GetStringProperty(lineElement, "Category");
-                var quantity = GetDecimalProperty(lineElement, "Quantity") ?? 0;
-                var unitRate = GetDecimalProperty(lineElement, "UnitRate") ?? 0;
-                var amount = GetDecimalProperty(lineElement, "Amount") ?? 0;
-
-                if (quantity <= 0)
-                {
-                    logger.LogWarning("Skipping line item {ProductId} with invalid quantity {Quantity}",
-                        productId, quantity);
-                    continue;
-                }
-
-                var product = await FindOrCreateProductNoSaveAsync(productId, productName, category, unitRate);
-
-                var line = new InvoiceLine
-                {
-                    Id = Guid.NewGuid(),
-                    InvoiceId = invoice.Id,
-                    ProductGuid = product.Id,
-                    ProductId = productId,
-                    ProductName = productName,
-                    Category = category,
-                    Quantity = quantity,
-                    UnitRate = unitRate,
-                    Amount = amount,
-                    CreatedAt = DateTime.UtcNow
-                };
-                invoice.LineItems.Add(line);
-
-                product.TotalQuantitySold += quantity;
-                product.TotalRevenue += amount;
-
-                if (!processedProducts.Contains(product.Id))
-                {
-                    product.InvoiceCount++;
-                    processedProducts.Add(product.Id);
-                }
-
-                if (invoice.InvoiceDate.HasValue)
-                {
-                    if (!product.LastSoldDate.HasValue ||
-                        invoice.InvoiceDate.Value > product.LastSoldDate.Value)
-                    {
-                        product.LastSoldDate = invoice.InvoiceDate.Value;
-                    }
-                }
-
-                product.UpdatedAt = DateTime.UtcNow;
-            }
-
-            if (invoice.LineItems.Count == 0)
-                throw new InvalidOperationException("No valid line items found. All line items were skipped due to missing or invalid data.");
-
-            // Mark invoice as modified if updating
-            if (isUpdate)
-            {
-                context.Entry(invoice).State = EntityState.Modified;
-            }
-
-            await context.SaveChangesAsync();
-
-            logger.LogInformation("Invoice {InvoiceId} ({InvoiceNumber}) {Action} successfully with {LineCount} line items",
-                invoice.Id, invoice.InvoiceNumber ?? "N/A", isUpdate ? "updated" : "created", invoice.LineItems.Count);
 
             return await MapToDtoAsync(invoice);
         }
 
-
-        public async Task<InvoiceDto?> GetInvoiceByIdAsync(Guid id)
+        public async Task<InvoiceDto?> GetInvoiceByFileIdAsync(string fileId, string userEmail, bool isAdmin = false)
         {
-            var invoice = await invoiceRepository.GetByIdAsync(id, includeLineItems: true);
-            return invoice != null ? await MapToDtoAsync(invoice) : null;
-        }
-
-        public async Task<InvoiceDto?> GetInvoiceByFileIdAsync(string fileId)
-        {
+            //  USE REPOSITORY
             var invoice = await invoiceRepository.GetByFileIdAsync(fileId, includeLineItems: true);
-            return invoice != null ? await MapToDtoAsync(invoice) : null;
+            if (invoice == null)
+            {
+                return null;
+            }
+
+            if (!isAdmin && invoice.VendorEmail != userEmail)
+            {
+                throw new UnauthorizedAccessException($"User {userEmail} is not authorized to access invoice for file {fileId}");
+            }
+
+            return await MapToDtoAsync(invoice);
         }
 
-        private async Task<Product> FindOrCreateProductNoSaveAsync(
-            string productId,
-            string productName,
-            string? category,
-            decimal? unitRate)
+        public async Task<List<InvoiceDto>> GetInvoicesByVendorAsync(string? vendorEmail, int skip, int take, bool isAdmin = false)
         {
-            var product = await productRepository.GetByProductIdAsync(productId);
+            //  USE REPOSITORY: RBAC filtering is now in repository
+            var invoices = await invoiceRepository.GetByVendorEmailAsync(
+                vendorEmail,
+                skip,
+                take,
+                includeLineItems: true,
+                isAdmin);
+
+            var dtos = new List<InvoiceDto>();
+            foreach (var invoice in invoices)
+            {
+                dtos.Add(await MapToDtoAsync(invoice));
+            }
+
+            return dtos;
+        }
+
+        public async Task<int> GetInvoiceCountByVendorAsync(string? vendorEmail, bool isAdmin = false)
+        {
+            //  USE REPOSITORY
+            return await invoiceRepository.GetCountByVendorEmailAsync(vendorEmail, isAdmin);
+        }
+
+        private async Task<Invoice> CreateInvoiceFromDataAsync(JsonElement extractedData, string driveFileId, string vendorEmail)
+        {
+            //  DbContext used ONLY for transaction coordination
+            var strategy = context.Database.CreateExecutionStrategy();
+            return await strategy.ExecuteAsync(async () =>
+            {
+                using var transaction = await context.Database.BeginTransactionAsync();
+                try
+                {
+                    var invoice = new Invoice
+                    {
+                        Id = Guid.NewGuid(),
+                        VendorEmail = vendorEmail,
+                        DriveFileId = driveFileId,
+                        OriginalFileName = GetStringProperty(extractedData, "OriginalFileName"),
+                        InvoiceNumber = GetStringProperty(extractedData, "InvoiceNumber"),
+                        InvoiceDate = GetDateTimeProperty(extractedData, "InvoiceDate"),
+                        OrderId = GetStringProperty(extractedData, "OrderId"),
+                        VendorName = GetStringProperty(extractedData, "VendorName"),
+                        BillToName = GetStringProperty(extractedData, "BillToName"),
+                        ShipToCity = GetStringProperty(extractedData, "ShipToCity"),
+                        ShipToState = GetStringProperty(extractedData, "ShipToState"),
+                        ShipToCountry = GetStringProperty(extractedData, "ShipToCountry"),
+                        ShipMode = GetStringProperty(extractedData, "ShipMode"),
+                        Subtotal = GetDecimalProperty(extractedData, "Subtotal"),
+                        DiscountPercentage = GetDecimalProperty(extractedData, "DiscountPercentage"),
+                        DiscountAmount = GetDecimalProperty(extractedData, "DiscountAmount"),
+                        ShippingCost = GetDecimalProperty(extractedData, "ShippingCost"),
+                        TotalAmount = GetDecimalProperty(extractedData, "TotalAmount"),
+                        BalanceDue = GetDecimalProperty(extractedData, "BalanceDue"),
+                        Currency = GetStringProperty(extractedData, "Currency"),
+                        Notes = GetStringProperty(extractedData, "Notes"),
+                        Terms = GetStringProperty(extractedData, "Terms"),
+                        ExtractedDataJson = JsonSerializer.Serialize(extractedData),
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+
+                    context.Invoices.Add(invoice);
+
+                    if (extractedData.TryGetProperty("LineItems", out var lineItemsElement) && lineItemsElement.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var lineItem in lineItemsElement.EnumerateArray())
+                        {
+                            var productId = GetStringProperty(lineItem, "ProductId");
+                            var productName = GetStringProperty(lineItem, "ProductName") ?? "Unknown";
+                            var category = GetStringProperty(lineItem, "Category");
+                            var quantity = GetDecimalProperty(lineItem, "Quantity");
+                            var unitRate = GetDecimalProperty(lineItem, "UnitRate");
+                            var amount = GetDecimalProperty(lineItem, "Amount");
+
+                            if (string.IsNullOrWhiteSpace(productId))
+                            {
+                                logger.LogWarning("Skipping line item with missing ProductId");
+                                continue;
+                            }
+
+                            var product = await GetOrCreateProductAsync(vendorEmail, productId, productName, category, unitRate);
+
+                            var invoiceLine = new InvoiceLine
+                            {
+                                Id = Guid.NewGuid(),
+                                InvoiceId = invoice.Id,
+                                ProductGuid = product.Id,
+                                ProductId = productId,
+                                ProductName = productName,
+                                Category = category,
+                                Quantity = quantity ?? 0,
+                                UnitRate = unitRate ?? 0,
+                                Amount = amount ?? 0,
+                                CreatedAt = DateTime.UtcNow
+                            };
+
+                            context.InvoiceLines.Add(invoiceLine);
+
+                            product.TotalQuantitySold += invoiceLine.Quantity ?? 0;
+                            product.TotalRevenue += invoiceLine.Amount ?? 0;
+                            product.InvoiceCount++;
+                            if (invoice.InvoiceDate.HasValue && (!product.LastSoldDate.HasValue || invoice.InvoiceDate > product.LastSoldDate))
+                            {
+                                product.LastSoldDate = invoice.InvoiceDate;
+                            }
+                            product.UpdatedAt = DateTime.UtcNow;
+                        }
+                    }
+
+                    await context.SaveChangesAsync();
+                    await transaction.CommitAsync();
+
+                    await vendorService.UpdateVendorActivityAsync(vendorEmail);
+
+                    logger.LogInformation("Created invoice {InvoiceId} with {LineCount} line items for vendor {VendorEmail}",
+                        invoice.Id, invoice.LineItems.Count, vendorEmail);
+
+                    return invoice;
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync();
+                    logger.LogError(ex, "Error creating invoice from extracted data");
+                    throw;
+                }
+            });
+        }
+
+        private async Task UpdateInvoiceFromDataAsync(Invoice invoice, JsonElement extractedData, string vendorEmail)
+        {
+            invoice.InvoiceNumber = GetStringProperty(extractedData, "InvoiceNumber") ?? invoice.InvoiceNumber;
+            invoice.InvoiceDate = GetDateTimeProperty(extractedData, "InvoiceDate") ?? invoice.InvoiceDate;
+            invoice.OrderId = GetStringProperty(extractedData, "OrderId") ?? invoice.OrderId;
+            invoice.VendorName = GetStringProperty(extractedData, "VendorName") ?? invoice.VendorName;
+            invoice.TotalAmount = GetDecimalProperty(extractedData, "TotalAmount") ?? invoice.TotalAmount;
+            invoice.ExtractedDataJson = JsonSerializer.Serialize(extractedData);
+            invoice.UpdatedAt = DateTime.UtcNow;
+
+            await context.SaveChangesAsync();
+            await vendorService.UpdateVendorActivityAsync(vendorEmail);
+
+            logger.LogInformation("Updated invoice {InvoiceId}", invoice.Id);
+        }
+
+        private async Task<Product> GetOrCreateProductAsync(string vendorEmail, string productId, string productName, string? category, decimal? unitRate)
+        {
+            //  USE REPOSITORY
+            var product = await productRepository.GetByVendorAndProductIdAsync(vendorEmail, productId);
 
             if (product == null)
             {
@@ -277,6 +307,7 @@ namespace invoice_v1.src.Application.Services
                 product = new Product
                 {
                     Id = Guid.NewGuid(),
+                    VendorEmail = vendorEmail,
                     ProductId = productId,
                     ProductName = productName,
                     Category = category,
@@ -286,10 +317,9 @@ namespace invoice_v1.src.Application.Services
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };
-                context.Products.Add(product);
 
-                logger.LogInformation("Created new product {ProductId} - {ProductName} ({Category})",
-                    productId, productName, category ?? "N/A");
+                context.Products.Add(product);
+                logger.LogInformation("Created new product {ProductId} for vendor {VendorEmail}", productId, vendorEmail);
             }
             else
             {
@@ -335,6 +365,7 @@ namespace invoice_v1.src.Application.Services
             return new InvoiceDto
             {
                 Id = invoice.Id,
+                VendorEmail = invoice.VendorEmail,
                 InvoiceNumber = invoice.InvoiceNumber,
                 InvoiceDate = invoice.InvoiceDate,
                 OrderId = invoice.OrderId,
@@ -383,14 +414,17 @@ namespace invoice_v1.src.Application.Services
 
             var invoiceNumber = GetStringProperty(extractedData, "InvoiceNumber");
             if (string.IsNullOrWhiteSpace(invoiceNumber))
+            {
                 errors.Add("InvoiceNumber is required");
+            }
 
             var totalAmount = GetDecimalProperty(extractedData, "TotalAmount");
             if (!totalAmount.HasValue || totalAmount.Value <= 0)
+            {
                 errors.Add("TotalAmount is required and must be greater than 0");
+            }
 
-            if (!extractedData.TryGetProperty("LineItems", out var lineItems) ||
-                lineItems.ValueKind != JsonValueKind.Array)
+            if (!extractedData.TryGetProperty("LineItems", out var lineItems) || lineItems.ValueKind != JsonValueKind.Array)
             {
                 errors.Add("LineItems array is required");
             }
@@ -401,7 +435,7 @@ namespace invoice_v1.src.Application.Services
 
             if (errors.Any())
             {
-                var errorMessage = $"Critical validation failed: {string.Join(", ", errors)}";
+                var errorMessage = "Critical validation failed: " + string.Join(", ", errors);
                 logger.LogError(errorMessage);
                 throw new InvalidOperationException(errorMessage);
             }
@@ -409,77 +443,44 @@ namespace invoice_v1.src.Application.Services
 
         private string? GetStringProperty(JsonElement element, string propertyName)
         {
-            if (!element.TryGetProperty(propertyName, out var prop))
-                return null;
-
-            if (prop.ValueKind == JsonValueKind.Null)
-                return null;
-
-            if (prop.ValueKind == JsonValueKind.String)
-                return prop.GetString();
-
-            logger.LogDebug("Property {PropertyName} has unexpected type {ValueKind}, expected String or Null",
-                propertyName, prop.ValueKind);
+            if (!element.TryGetProperty(propertyName, out var prop)) return null;
+            if (prop.ValueKind == JsonValueKind.Null) return null;
+            if (prop.ValueKind == JsonValueKind.String) return prop.GetString();
             return null;
         }
 
         private decimal? GetDecimalProperty(JsonElement element, string propertyName)
         {
-            if (!element.TryGetProperty(propertyName, out var prop))
-                return null;
-
-            if (prop.ValueKind == JsonValueKind.Null)
-                return null;
-
+            if (!element.TryGetProperty(propertyName, out var prop)) return null;
+            if (prop.ValueKind == JsonValueKind.Null) return null;
             if (prop.ValueKind == JsonValueKind.Number)
             {
-                try
-                {
-                    return prop.GetDecimal();
-                }
-                catch (FormatException)
-                {
-                    try
-                    {
-                        return (decimal)prop.GetDouble();
-                    }
-                    catch
-                    {
-                        logger.LogWarning("Failed to parse {PropertyName} as decimal (value out of range)", propertyName);
-                        return null;
-                    }
-                }
+                try { return prop.GetDecimal(); }
+                catch { return (decimal?)prop.GetDouble(); }
             }
-
             if (prop.ValueKind == JsonValueKind.String)
             {
                 var str = prop.GetString();
                 if (!string.IsNullOrWhiteSpace(str) && decimal.TryParse(str, out var value))
+                {
                     return value;
+                }
             }
-
-            logger.LogDebug("Property {PropertyName} has unexpected type {ValueKind}, expected Number or Null",
-                propertyName, prop.ValueKind);
             return null;
         }
 
         private DateTime? GetDateTimeProperty(JsonElement element, string propertyName)
         {
-            if (!element.TryGetProperty(propertyName, out var prop))
-                return null;
-
-            if (prop.ValueKind == JsonValueKind.Null)
-                return null;
-
+            if (!element.TryGetProperty(propertyName, out var prop)) return null;
+            if (prop.ValueKind == JsonValueKind.Null) return null;
             if (prop.ValueKind == JsonValueKind.String)
             {
                 var str = prop.GetString();
                 if (!string.IsNullOrWhiteSpace(str) && DateTime.TryParse(str, out var value))
+                {
                     return value;
-
-                logger.LogWarning("Failed to parse {PropertyName} as DateTime: {Value}", propertyName, str);
+                }
             }
-
             return null;
         }
     }

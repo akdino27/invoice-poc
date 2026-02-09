@@ -1,82 +1,118 @@
 ﻿using invoice_v1.src.Application.DTOs;
 using invoice_v1.src.Application.Interfaces;
+using invoice_v1.src.Api.Filters;
 using Microsoft.AspNetCore.Mvc;
 
 namespace invoice_v1.src.Api.Controllers
 {
-    // Analytics and insights endpoints
+    /// <summary>
+    /// Analytics and insights endpoints with RBAC support.
+    /// REFACTORED: Uses RbacActionFilter to eliminate duplicate code.
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
+    [ServiceFilter(typeof(RbacActionFilter))]
     public class AnalyticsController : ControllerBase
     {
-        private readonly IAnalyticsService _analyticsService;
-        private readonly ILogger<AnalyticsController> _logger;
+        private readonly IAnalyticsService analyticsService;
+        private readonly ILogger<AnalyticsController> logger;
 
         public AnalyticsController(
             IAnalyticsService analyticsService,
             ILogger<AnalyticsController> logger)
         {
-            _analyticsService = analyticsService;
-            _logger = logger;
+            this.analyticsService = analyticsService;
+            this.logger = logger;
         }
 
-        // Get products sold in a date range
+        /// <summary>
+        /// Get products sold in a date range (RBAC filtered).
+        /// </summary>
         [HttpGet("products/sales")]
         [ProducesResponseType(typeof(List<ProductSalesDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> GetProductSales(
             [FromQuery] DateTime startDate,
             [FromQuery] DateTime endDate,
             [FromQuery] string? category = null)
         {
-            var results = await _analyticsService.GetProductSalesByDateRangeAsync(
+            var (userEmail, isAdmin) = this.GetUserContext();
+
+            var results = await analyticsService.GetProductSalesByDateRangeAsync(
                 startDate,
                 endDate,
-                category);
+                category,
+                userEmail,
+                isAdmin);
 
             return Ok(results);
         }
 
-        // Get trending products
+        /// <summary>
+        /// Get trending products (RBAC filtered).
+        /// </summary>
         [HttpGet("products/trending")]
         [ProducesResponseType(typeof(List<ProductTrendDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> GetTrendingProducts(
             [FromQuery] DateTime startDate,
             [FromQuery] DateTime endDate,
             [FromQuery] int topN = 10)
         {
-            var results = await _analyticsService.GetTrendingProductsAsync(
+            var (userEmail, isAdmin) = this.GetUserContext();
+
+            var results = await analyticsService.GetTrendingProductsAsync(
                 startDate,
                 endDate,
-                topN);
+                topN,
+                userEmail,
+                isAdmin);
 
             return Ok(results);
         }
 
-        // Get category sales
+        /// <summary>
+        /// Get category sales (RBAC filtered).
+        /// </summary>
         [HttpGet("categories/sales")]
         [ProducesResponseType(typeof(List<CategorySalesDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> GetCategorySales(
             [FromQuery] DateTime startDate,
             [FromQuery] DateTime endDate)
         {
-            var results = await _analyticsService.GetCategorySalesAsync(startDate, endDate);
+            var (userEmail, isAdmin) = this.GetUserContext();
+
+            var results = await analyticsService.GetCategorySalesAsync(
+                startDate,
+                endDate,
+                userEmail,
+                isAdmin);
+
             return Ok(results);
         }
 
-        // Get time-series for a product
+        /// <summary>
+        /// Get time-series for a product (RBAC filtered).
+        /// </summary>
         [HttpGet("products/{productId}/timeseries")]
         [ProducesResponseType(typeof(List<ProductTimeSeriesDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> GetProductTimeSeries(
             string productId,
             [FromQuery] DateTime startDate,
             [FromQuery] DateTime endDate,
             [FromQuery] TimeGranularity granularity = TimeGranularity.Monthly)
         {
-            var results = await _analyticsService.GetProductTimeSeriesAsync(
+            var (userEmail, isAdmin) = this.GetUserContext();
+
+            var results = await analyticsService.GetProductTimeSeriesAsync(
                 productId,
                 startDate,
                 endDate,
-                granularity);
+                granularity,
+                userEmail,
+                isAdmin);
 
             return Ok(results);
         }

@@ -3,8 +3,10 @@ using System.Text.Json;
 
 namespace invoice_v1.src.Api.Middleware
 {
+    /// <summary>
     /// Global exception handling middleware.
     /// Catches unhandled exceptions and returns structured error responses.
+    /// </summary>
     public class ExceptionHandlingMiddleware
     {
         private readonly RequestDelegate _next;
@@ -45,11 +47,12 @@ namespace invoice_v1.src.Api.Middleware
             };
 
             switch (exception)
-            { 
+            {
                 case ArgumentNullException:
                     context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
                     response.Message = exception.Message;
                     break;
+
                 case ArgumentException:
                 case InvalidOperationException:
                     context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
@@ -57,8 +60,11 @@ namespace invoice_v1.src.Api.Middleware
                     break;
 
                 case UnauthorizedAccessException:
-                    context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
-                    response.Message = "Unauthorized access";
+                    // FIXED: Changed from 401 to 403
+                    // 401 = Not authenticated (missing/invalid credentials)
+                    // 403 = Authenticated but not authorized (insufficient permissions)
+                    context.Response.StatusCode = (int)HttpStatusCode.Forbidden;
+                    response.Message = exception.Message;
                     break;
 
                 default:

@@ -4,9 +4,14 @@ namespace invoice_v1.src.Infrastructure.Repositories
 {
     public interface IInvalidInvoiceRepository
     {
-        Task<InvalidInvoice> CreateAsync(InvalidInvoice invalidInvoice);
-        Task<InvalidInvoice?> GetByIdAsync(Guid id);
-        Task<List<InvalidInvoice>> GetAllAsync(int skip, int take);
-        Task<int> GetCountAsync();
+        Task CreateAsync(InvalidInvoice invalidInvoice);
+
+        Task<List<InvalidInvoice>> GetAllAsync(
+            int skip,
+            int take,
+            string? userEmail = null,
+            bool isAdmin = false);
+
+        Task<int> GetCountAsync(string? userEmail = null, bool isAdmin = false);
     }
 }

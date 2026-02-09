@@ -179,6 +179,26 @@ namespace invoice_v1.src.Services
                         continue;
                     }
 
+                    //  NEW: Extract vendor email from file metadata
+                    string? vendorEmail = null;
+
+                    // Try LastModifyingUser first (most recent uploader)
+                    if (file.LastModifyingUser != null && !string.IsNullOrWhiteSpace(file.LastModifyingUser.EmailAddress))
+                    {
+                        vendorEmail = file.LastModifyingUser.EmailAddress;
+                    }
+                    // Fallback to owner
+                    else if (file.Owners != null && file.Owners.Count > 0 && !string.IsNullOrWhiteSpace(file.Owners[0].EmailAddress))
+                    {
+                        vendorEmail = file.Owners[0].EmailAddress;
+                    }
+                    // Fallback to DisplayName (old behavior) if no email found
+                    else
+                    {
+                        vendorEmail = file.Owners?.FirstOrDefault()?.DisplayName ?? "Unknown";
+                        logger.LogWarning("No email found for file {FileName}, using DisplayName: {DisplayName}", file.Name, vendorEmail);
+                    }
+
                     var fileModifiedTime = file.ModifiedTime ?? DateTime.MinValue;
 
                     if (!lastSeenFiles.ContainsKey(file.Id))
@@ -192,10 +212,10 @@ namespace invoice_v1.src.Services
                             DetectedAt = DateTime.UtcNow,
                             MimeType = file.MimeType,
                             FileSize = file.Size,
-                            ModifiedBy = file.Owners?.FirstOrDefault()?.DisplayName ?? "Unknown",
+                            ModifiedBy = vendorEmail, //  UPDATED: Now stores email instead of DisplayName
                             GoogleDriveModifiedTime = fileModifiedTime
                         });
-                        logger.LogInformation("New file detected: {FileName}", file.Name);
+                        logger.LogInformation("New file detected: {FileName} (Vendor: {VendorEmail})", file.Name, vendorEmail);
                     }
                     else if (lastSeenFiles.TryGetValue(file.Id, out var lastSeen) &&
                              lastSeen.ModifiedTime < fileModifiedTime)
@@ -209,10 +229,10 @@ namespace invoice_v1.src.Services
                             DetectedAt = DateTime.UtcNow,
                             MimeType = file.MimeType,
                             FileSize = file.Size,
-                            ModifiedBy = file.Owners?.FirstOrDefault()?.DisplayName ?? "Unknown",
+                            ModifiedBy = vendorEmail, //  UPDATED: Now stores email instead of DisplayName
                             GoogleDriveModifiedTime = fileModifiedTime
                         });
-                        logger.LogInformation("File modified: {FileName}", file.Name);
+                        logger.LogInformation("File modified: {FileName} (Vendor: {VendorEmail})", file.Name, vendorEmail);
                     }
                 }
 

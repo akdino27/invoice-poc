@@ -17,6 +17,7 @@ namespace invoice_v1.src.Infrastructure.Data
         public DbSet<Invoice> Invoices { get; set; } = null!;
         public DbSet<InvoiceLine> InvoiceLines { get; set; } = null!;
         public DbSet<InvalidInvoice> InvalidInvoices { get; set; } = null!;
+        public DbSet<Vendor> Vendors { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -24,6 +25,7 @@ namespace invoice_v1.src.Infrastructure.Data
 
             ConfigureFileChangeLog(modelBuilder);
             ConfigureJobQueue(modelBuilder);
+            ConfigureVendor(modelBuilder);
             ConfigureProduct(modelBuilder);
             ConfigureInvoice(modelBuilder);
             ConfigureInvoiceLine(modelBuilder);
@@ -57,6 +59,10 @@ namespace invoice_v1.src.Infrastructure.Data
 
                 entity.HasIndex(e => e.ChangeType)
                     .HasDatabaseName("IX_FileChangeLogs_ChangeType");
+
+                // NEW: Index on ModifiedBy for vendor filtering
+                entity.HasIndex(e => e.ModifiedBy)
+                    .HasDatabaseName("IX_FileChangeLogs_ModifiedBy");
             });
         }
 
@@ -77,9 +83,10 @@ namespace invoice_v1.src.Infrastructure.Data
                     .IsRequired()
                     .HasMaxLength(50);
 
+                // CHANGE 1: PostgreSQL JSONB instead of nvarchar(max)
                 entity.Property(e => e.PayloadJson)
                     .IsRequired()
-                    .HasColumnType("nvarchar(max)");
+                    .HasColumnType("jsonb");
 
                 entity.HasIndex(e => new { e.Status, e.NextRetryAt })
                     .HasDatabaseName("IX_JobQueues_Status_NextRetryAt");
@@ -92,6 +99,53 @@ namespace invoice_v1.src.Infrastructure.Data
 
                 entity.HasIndex(e => e.CreatedAt)
                     .HasDatabaseName("IX_JobQueues_CreatedAt");
+
+                // CHANGE 1 (continued): Add GIN index for JSONB queries
+                entity.HasIndex(e => e.PayloadJson)
+                    .HasMethod("gin")
+                    .HasDatabaseName("IX_JobQueues_PayloadJson_Gin");
+            });
+        }
+
+        private static void ConfigureVendor(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Vendor>(entity =>
+            {
+                entity.HasKey(v => v.Email);
+
+                entity.Property(v => v.Email)
+                    .IsRequired()
+                    .HasMaxLength(200);
+
+                entity.Property(v => v.DisplayName)
+                    .HasMaxLength(200);
+
+                entity.Property(v => v.FirstSeenAt)
+                    .IsRequired();
+
+                entity.Property(v => v.LastActivityAt)
+                    .IsRequired();
+
+                // Index on Email (primary key is already indexed)
+                entity.HasIndex(v => v.Email)
+                    .IsUnique()
+                    .HasDatabaseName("IX_Vendors_Email");
+
+                // Index on LastActivityAt for sorting
+                entity.HasIndex(v => v.LastActivityAt)
+                    .HasDatabaseName("IX_Vendors_LastActivityAt");
+
+                // One vendor has many invoices
+                entity.HasMany(v => v.Invoices)
+                    .WithOne(i => i.Vendor)
+                    .HasForeignKey(i => i.VendorEmail)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                // One vendor has many products
+                entity.HasMany(v => v.Products)
+                    .WithOne(p => p.Vendor)
+                    .HasForeignKey(p => p.VendorEmail)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
         }
 
@@ -104,6 +158,11 @@ namespace invoice_v1.src.Infrastructure.Data
                 entity.Property(e => e.Id)
                     .ValueGeneratedNever();
 
+                // NEW: VendorEmail is required
+                entity.Property(e => e.VendorEmail)
+                    .IsRequired()
+                    .HasMaxLength(200);
+
                 entity.Property(e => e.ProductId)
                     .IsRequired()
                     .HasMaxLength(100);
@@ -112,9 +171,17 @@ namespace invoice_v1.src.Infrastructure.Data
                     .IsRequired()
                     .HasMaxLength(500);
 
-                entity.HasIndex(e => e.ProductId)
+                entity.HasIndex(e => new { e.VendorEmail, e.ProductId })
                     .IsUnique()
-                    .HasDatabaseName("IX_Products_ProductId_Unique");
+                    .HasDatabaseName("IX_Products_VendorEmail_ProductId_Unique");
+
+                // NEW: Index on VendorEmail for RBAC filtering
+                entity.HasIndex(e => e.VendorEmail)
+                    .HasDatabaseName("IX_Products_VendorEmail");
+
+                // Keep original ProductId index for queries (not unique anymore)
+                entity.HasIndex(e => e.ProductId)
+                    .HasDatabaseName("IX_Products_ProductId");
 
                 entity.HasIndex(e => e.PrimaryCategory)
                     .HasDatabaseName("IX_Products_PrimaryCategory");
@@ -142,6 +209,11 @@ namespace invoice_v1.src.Infrastructure.Data
                 entity.Property(e => e.Id)
                     .ValueGeneratedNever();
 
+                // NEW: VendorEmail is required
+                entity.Property(e => e.VendorEmail)
+                    .IsRequired()
+                    .HasMaxLength(200);
+
                 entity.Property(e => e.DriveFileId)
                     .IsRequired()
                     .HasMaxLength(100);
@@ -149,6 +221,16 @@ namespace invoice_v1.src.Infrastructure.Data
                 entity.HasIndex(e => e.DriveFileId)
                     .IsUnique()
                     .HasDatabaseName("IX_Invoices_DriveFileId_Unique");
+
+                // NEW: Composite unique constraint (VendorEmail, InvoiceNumber)
+                // Allows different vendors to have same invoice number
+                entity.HasIndex(e => new { e.VendorEmail, e.InvoiceNumber })
+                    .IsUnique()
+                    .HasDatabaseName("IX_Invoices_VendorEmail_InvoiceNumber_Unique");
+
+                // NEW: Index on VendorEmail for RBAC filtering
+                entity.HasIndex(e => e.VendorEmail)
+                    .HasDatabaseName("IX_Invoices_VendorEmail");
 
                 entity.HasIndex(e => e.InvoiceNumber)
                     .HasDatabaseName("IX_Invoices_InvoiceNumber");
@@ -170,6 +252,15 @@ namespace invoice_v1.src.Infrastructure.Data
 
                 entity.HasIndex(e => e.CreatedAt)
                     .HasDatabaseName("IX_Invoices_CreatedAt");
+
+                // Add JSONB configuration for ExtractedDataJson
+                entity.Property(e => e.ExtractedDataJson)
+                    .HasColumnType("jsonb");
+
+                // Add GIN index for JSONB queries
+                entity.HasIndex(e => e.ExtractedDataJson)
+                    .HasMethod("gin")
+                    .HasDatabaseName("IX_Invoices_ExtractedDataJson_Gin");
             });
         }
 
@@ -237,6 +328,14 @@ namespace invoice_v1.src.Infrastructure.Data
                 entity.Property(e => e.Id)
                     .ValueGeneratedNever();
 
+                // VendorEmail (nullable for backward compatibility)
+                entity.Property(e => e.VendorEmail)
+                    .HasMaxLength(200);
+
+                // Index on VendorEmail for RBAC filtering
+                entity.HasIndex(e => e.VendorEmail)
+                    .HasDatabaseName("IX_InvalidInvoices_VendorEmail");
+
                 entity.HasIndex(e => e.FileId)
                     .HasDatabaseName("IX_InvalidInvoices_FileId");
 
@@ -246,9 +345,10 @@ namespace invoice_v1.src.Infrastructure.Data
                 entity.Property(e => e.FileId)
                     .HasMaxLength(100);
 
+                // PostgreSQL text instead of nvarchar(max)
                 entity.Property(e => e.Reason)
                     .IsRequired()
-                    .HasColumnType("nvarchar(max)");
+                    .HasColumnType("text");
 
                 entity.Property(e => e.CreatedAt)
                     .IsRequired();

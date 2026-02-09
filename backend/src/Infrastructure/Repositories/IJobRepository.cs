@@ -5,11 +5,16 @@ namespace invoice_v1.src.Infrastructure.Repositories
 {
     public interface IJobRepository
     {
-        Task<JobQueue> CreateAsync(JobQueue job);
+        Task<JobQueue> CreateJobAsync(JobQueue job);
         Task<JobQueue?> GetByIdAsync(Guid id);
-        Task<List<JobQueue>> GetAllAsync(JobStatus? status, int skip, int take);
-        Task<int> GetCountAsync(JobStatus? status);
-        Task UpdateJobAsync(JobQueue job); 
-        Task<int> GetPendingCountAsync();
+        Task<(List<JobQueue> Jobs, int Total)> GetJobsAsync(
+            JobStatus? status,
+            int skip,
+            int take,
+            string? vendorEmail = null);
+
+        Task<List<JobQueue>> GetPendingJobsAsync(int batchSize);
+        Task UpdateJobAsync(JobQueue job);
+        Task<int> GetJobCountAsync(JobStatus? status = null);
     }
 }

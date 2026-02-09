@@ -13,30 +13,44 @@ namespace invoice_v1.src.Infrastructure.Repositories
             this.context = context;
         }
 
-        public async Task<InvalidInvoice> CreateAsync(InvalidInvoice invalidInvoice)
+        public async Task CreateAsync(InvalidInvoice invalidInvoice)
         {
             context.InvalidInvoices.Add(invalidInvoice);
             await context.SaveChangesAsync();
-            return invalidInvoice;
         }
 
-        public async Task<InvalidInvoice?> GetByIdAsync(Guid id)
+        public async Task<List<InvalidInvoice>> GetAllAsync(
+            int skip,
+            int take,
+            string? userEmail = null,
+            bool isAdmin = false)
         {
-            return await context.InvalidInvoices.FindAsync(id);
-        }
+            IQueryable<InvalidInvoice> query = context.InvalidInvoices;
 
-        public async Task<List<InvalidInvoice>> GetAllAsync(int skip, int take)
-        {
-            return await context.InvalidInvoices
+            // RBAC filtering
+            if (!isAdmin && !string.IsNullOrWhiteSpace(userEmail))
+            {
+                query = query.Where(i => i.VendorEmail == userEmail);
+            }
+
+            return await query
                 .OrderByDescending(i => i.CreatedAt)
                 .Skip(skip)
                 .Take(take)
                 .ToListAsync();
         }
 
-        public async Task<int> GetCountAsync()
+        public async Task<int> GetCountAsync(string? userEmail = null, bool isAdmin = false)
         {
-            return await context.InvalidInvoices.CountAsync();
+            IQueryable<InvalidInvoice> query = context.InvalidInvoices;
+
+            // RBAC filtering
+            if (!isAdmin && !string.IsNullOrWhiteSpace(userEmail))
+            {
+                query = query.Where(i => i.VendorEmail == userEmail);
+            }
+
+            return await query.CountAsync();
         }
     }
 }

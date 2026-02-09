@@ -6,83 +6,91 @@ namespace invoice_v1.src.Infrastructure.Repositories
 {
     public class FileChangeLogRepository : IFileChangeLogRepository
     {
-        private readonly ApplicationDbContext context;
-        private readonly ILogger<FileChangeLogRepository> logger;
+        private readonly ApplicationDbContext _context;
+        private readonly ILogger<FileChangeLogRepository> _logger;
 
         public FileChangeLogRepository(
             ApplicationDbContext context,
             ILogger<FileChangeLogRepository> logger)
         {
-            this.context = context;
-            this.logger = logger;
+            _context = context;
+            _logger = logger;
         }
 
         public async Task<FileChangeLog> CreateAsync(FileChangeLog log)
         {
-            try
-            {
-                context.FileChangeLogs.Add(log);
-                await context.SaveChangesAsync();
-                logger.LogDebug("Created FileChangeLog {Id} for file {FileId}", log.Id, log.FileId);
-                return log;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex,
-                    "FAILED to save FileChangeLog for file {FileId}, ChangeType: {ChangeType}, FileName: {FileName}",
-                    log.FileId, log.ChangeType, log.FileName);
-                throw;
-            }
+            _context.FileChangeLogs.Add(log);
+            await _context.SaveChangesAsync();
+            return log;
         }
 
         public async Task CreateRangeAsync(List<FileChangeLog> logs)
         {
-            try
-            {
-                context.FileChangeLogs.AddRange(logs);
-                var saved = await context.SaveChangesAsync();
-                logger.LogInformation("Saved {Count} FileChangeLogs to database", saved);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "FAILED to save {Count} FileChangeLogs", logs.Count);
-                throw;
-            }
+            _context.FileChangeLogs.AddRange(logs);
+            await _context.SaveChangesAsync();
         }
 
-
-        public async Task<List<FileChangeLog>> GetUnprocessedAsync(int batchSize = 50)
+        public async Task<FileChangeLog?> GetByIdAsync(Guid id)
         {
-            return await context.FileChangeLogs
-                .Where(log => log.ProcessedAt == null &&
-                             (log.ChangeType == "Upload" || log.ChangeType == "Modified"))
-                .OrderBy(log => log.DetectedAt)
-                .Take(batchSize)
-                .ToListAsync();
+            return await _context.FileChangeLogs.FindAsync(id);
         }
 
-        public async Task MarkAsProcessedAsync(Guid logId)
+        public async Task<FileChangeLog?> GetByFileIdAsync(string fileId)
         {
-            var log = await context.FileChangeLogs.FindAsync(logId);
-            if (log != null)
+            return await _context.FileChangeLogs
+                .Where(l => l.FileId == fileId)
+                .OrderByDescending(l => l.DetectedAt)
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<(List<FileChangeLog> Logs, int Total)> GetLogsAsync(
+            int skip,
+            int take,
+            string? vendorEmail = null)
+        {
+            var query = _context.FileChangeLogs.AsQueryable();
+
+            // RBAC filtering: Filter by ModifiedBy for non-admins
+            if (!string.IsNullOrWhiteSpace(vendorEmail))
             {
-                log.ProcessedAt = DateTime.UtcNow;
-                await context.SaveChangesAsync();
+                query = query.Where(l => l.ModifiedBy == vendorEmail);
             }
-        }
 
-        public async Task<List<FileChangeLog>> GetAllAsync(int skip, int take)
-        {
-            return await context.FileChangeLogs
+            var total = await query.CountAsync();
+
+            var logs = await query
                 .OrderByDescending(l => l.DetectedAt)
                 .Skip(skip)
                 .Take(take)
                 .ToListAsync();
+
+            return (logs, total);
         }
 
-        public async Task<int> GetCountAsync()
+        public async Task<List<FileChangeLog>> GetUnprocessedAsync(int batchSize)
         {
-            return await context.FileChangeLogs.CountAsync();
+            return await _context.FileChangeLogs
+                .Where(l => l.ProcessedAt == null)
+                .OrderBy(l => l.DetectedAt)
+                .Take(batchSize)
+                .ToListAsync();
+        }
+
+        public async Task MarkAsProcessedAsync(Guid id)
+        {
+            var log = await _context.FileChangeLogs.FindAsync(id);
+            if (log != null)
+            {
+                log.ProcessedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+        }
+
+        public async Task<int> GetUnprocessedCountAsync()
+        {
+            return await _context.FileChangeLogs
+                .Where(l => l.ProcessedAt == null)
+                .CountAsync();
         }
     }
 }

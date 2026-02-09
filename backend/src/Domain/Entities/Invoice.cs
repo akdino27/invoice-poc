@@ -8,6 +8,20 @@ namespace invoice_v1.src.Domain.Entities
         [Key]
         public Guid Id { get; set; }
 
+        [Required]
+        [MaxLength(200)]
+        public string VendorEmail { get; set; } = string.Empty;
+
+        [ForeignKey(nameof(VendorEmail))]
+        public Vendor Vendor { get; set; } = null!;
+
+        [Required]
+        [MaxLength(100)]
+        public string DriveFileId { get; set; } = string.Empty;
+
+        [MaxLength(500)]
+        public string? OriginalFileName { get; set; }
+
         [MaxLength(100)]
         public string? InvoiceNumber { get; set; }
 
@@ -16,16 +30,13 @@ namespace invoice_v1.src.Domain.Entities
         [MaxLength(100)]
         public string? OrderId { get; set; }
 
-        // Vendor/Seller information
         [MaxLength(200)]
         public string? VendorName { get; set; }
 
-        // Bill To (Customer)
         [MaxLength(200)]
         public string? BillToName { get; set; }
 
-        // Ship To Address
-        [MaxLength(200)]
+        [MaxLength(100)]
         public string? ShipToCity { get; set; }
 
         [MaxLength(100)]
@@ -37,11 +48,10 @@ namespace invoice_v1.src.Domain.Entities
         [MaxLength(50)]
         public string? ShipMode { get; set; }
 
-        // Financial Details
         [Column(TypeName = "decimal(18,2)")]
         public decimal? Subtotal { get; set; }
 
-        [Column(TypeName = "decimal(18,2)")]
+        [Column(TypeName = "decimal(5,2)")]
         public decimal? DiscountPercentage { get; set; }
 
         [Column(TypeName = "decimal(18,2)")]
@@ -59,22 +69,16 @@ namespace invoice_v1.src.Domain.Entities
         [MaxLength(10)]
         public string? Currency { get; set; }
 
-        // Notes and Terms
-        [Column(TypeName = "nvarchar(max)")]
         public string? Notes { get; set; }
 
-        [Column(TypeName = "nvarchar(max)")]
         public string? Terms { get; set; }
 
-        // Drive file reference
-        [Required]
-        [MaxLength(100)]
-        public string DriveFileId { get; set; } = string.Empty;
-
-        [MaxLength(500)]
-        public string? OriginalFileName { get; set; }
-
-        [Column(TypeName = "nvarchar(max)")]
+        /// <summary>
+        /// Raw JSON response from Gemini AI extraction.
+        /// Stored for audit and debugging purposes.
+        /// PostgreSQL JSONB column for efficient querying.
+        /// </summary>
+        [Column(TypeName = "jsonb")]
         public string? ExtractedDataJson { get; set; }
 
         [Required]
