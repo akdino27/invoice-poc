@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace invoice_v1.Migrations
 {
     /// <inheritdoc />
-    public partial class WorkerDBAdded : Migration
+    public partial class RepositoryAdded : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -15,8 +15,7 @@ namespace invoice_v1.Migrations
                 name: "FileChangeLogs",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "int", nullable: false)
-                        .Annotation("SqlServer:Identity", "1, 1"),
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     FileName = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: true),
                     FileId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true),
                     ChangeType = table.Column<string>(type: "nvarchar(50)", maxLength: 50, nullable: false),
@@ -37,7 +36,7 @@ namespace invoice_v1.Migrations
                 name: "InvalidInvoices",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false, defaultValueSql: "NEWID()"),
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     FileName = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: true),
                     FileId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true),
                     Reason = table.Column<string>(type: "nvarchar(max)", nullable: false),

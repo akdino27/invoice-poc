@@ -47,8 +47,13 @@ class InvoiceWorker:
         self.job_claimer.connect()
         self.logger.info("✓ Database connected")
         
-        # Google Drive connection
-        self.drive_service = DriveService(config.google_service_account_key)
+        # Google Drive connection with timeout and retry config
+        self.drive_service = DriveService(
+            service_account_key_path=config.google_service_account_key,
+            timeout=config.drive_download_timeout,
+            chunk_size=config.drive_chunk_size,
+            max_retries=config.drive_max_retries
+        )
         self.drive_service.connect()
         self.logger.info("✓ Google Drive connected")
         
@@ -68,7 +73,7 @@ class InvoiceWorker:
             "start_time": datetime.now(timezone.utc)
         }
         
-        self.logger.info("Worker initialization complete")
+        self.logger.info("Worker initialization complete") 
     
     async def start(self):
         """Start the worker polling loop."""
@@ -121,7 +126,7 @@ class InvoiceWorker:
         # Process the job
         callback_data = await self._process_job(job)
         
-        # ✅ Release lock BEFORE sending callback to avoid deadlock
+        # Release lock BEFORE sending callback to avoid deadlock
         try:
             self.job_claimer.release_job_lock(job_id)
             self.logger.debug(f"[{job_id}] Released job lock before callback")
