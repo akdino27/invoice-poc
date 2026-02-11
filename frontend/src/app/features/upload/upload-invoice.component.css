@@ -1,0 +1,300 @@
+.upload-container {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.page-header {
+  margin-bottom: 32px;
+}
+
+.page-title {
+  font-size: 28px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 8px;
+}
+
+.page-subtitle {
+  font-size: 16px;
+  color: #6b7280;
+  margin: 0;
+}
+
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.alert svg {
+  flex-shrink: 0;
+}
+
+.alert-success {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+}
+
+.alert-error {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+
+.upload-section {
+  margin-bottom: 32px;
+}
+
+.drop-zone {
+  padding: 48px;
+  text-align: center;
+  border: 3px dashed #d1d5db;
+  background: #fafafa;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.drop-zone:hover,
+.drop-zone.drag-over {
+  border-color: #0066cc;
+  background: #eff6ff;
+}
+
+.drop-zone-content {
+  pointer-events: none;
+}
+
+.upload-icon {
+  width: 64px;
+  height: 64px;
+  color: #9ca3af;
+  margin-bottom: 16px;
+}
+
+.drop-zone:hover .upload-icon,
+.drop-zone.drag-over .upload-icon {
+  color: #0066cc;
+}
+
+.drop-zone-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 8px;
+}
+
+.drop-zone-text {
+  color: #6b7280;
+  margin: 16px 0;
+  font-size: 15px;
+}
+
+.btn-primary {
+  pointer-events: auto;
+  display: inline-block;
+  padding: 12px 32px;
+  background: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+  background: #0052a3;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 102, 204, 0.3);
+}
+
+.file-input {
+  display: none;
+}
+
+.drop-zone-info {
+  margin-top: 16px;
+  font-size: 13px;
+  color: #9ca3af;
+}
+
+.progress-section {
+  margin-top: 24px;
+  padding: 24px;
+}
+
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.progress-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0;
+}
+
+.btn-clear {
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-clear:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.progress-item {
+  padding: 16px;
+  background: #f9fafb;
+  border-radius: 8px;
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.progress-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.progress-status {
+  font-size: 13px;
+}
+
+.status-uploading {
+  color: #0066cc;
+}
+
+.status-completed {
+  color: #10b981;
+}
+
+.status-error {
+  color: #ef4444;
+}
+
+.progress-bar-container {
+  height: 8px;
+  background: #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progress-bar {
+  height: 100%;
+  transition: width 0.3s ease;
+  border-radius: 4px;
+}
+
+.progress-percentage {
+  text-align: right;
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.info-section {
+  padding: 32px;
+  background: white;
+}
+
+.info-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 24px;
+}
+
+.info-steps {
+  display: grid;
+  gap: 24px;
+}
+
+.info-step {
+  display: flex;
+  gap: 16px;
+}
+
+.step-number {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0066cc 0%, #003d7a 100%);
+  color: white;
+  border-radius: 50%;
+  font-size: 18px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.step-content {
+  flex: 1;
+}
+
+.step-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 8px;
+}
+
+.step-description {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0;
+  line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+  .drop-zone {
+    padding: 32px 24px;
+  }
+
+  .upload-icon {
+    width: 48px;
+    height: 48px;
+  }
+
+  .drop-zone-title {
+    font-size: 18px;
+  }
+
+  .progress-section {
+    padding: 16px;
+  }
+
+  .info-section {
+    padding: 24px 16px;
+  }
+}

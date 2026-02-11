@@ -1,0 +1,3500 @@
+﻿----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\core\guards\auth.guard.ts -----
+import { inject } from '@angular/core';
+import { Router, type CanActivateFn } from '@angular/router';
+import { AuthService } from '../services/auth.service';
+
+export const authGuard: CanActivateFn = (route, state) => {
+  const authService = inject(AuthService);
+  const router = inject(Router);
+
+  if (authService.isAuthenticated()) {
+    return true;
+  }
+
+  // Redirect to login page
+  return router.createUrlTree(['/login']);
+};
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\core\interceptors\auth.interceptor.ts -----
+import { HttpInterceptorFn } from '@angular/common/http';
+import { inject } from '@angular/core';
+import { AuthService } from '../services/auth.service';
+
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+  const authService = inject(AuthService);
+  const token = authService.getAccessToken();
+
+  // Only add token to backend API requests
+  if (req.url.includes('localhost:5247') || req.url.includes('localhost:7072')) {
+    if (token) {
+      req = req.clone({
+        setHeaders: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+    }
+  }
+
+  return next(req);
+};
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\core\models\drive-file.model.ts -----
+export interface DriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: string;
+  createdTime: string;
+  modifiedTime: string;
+  webViewLink?: string;
+  webContentLink?: string;
+  thumbnailLink?: string;
+  iconLink?: string;
+}
+
+export interface DriveFileListResponse {
+  kind: string;
+  incompleteSearch: boolean;
+  files: DriveFile[];
+  nextPageToken?: string;
+}
+
+export interface DriveUploadResponse {
+  id: string;
+  name: string;
+  mimeType: string;
+  kind: string;
+}
+
+export interface UploadProgress {
+  fileName: string;
+  progress: number;
+  status: 'uploading' | 'completed' | 'error';
+  error?: string;
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\core\models\user.model.ts -----
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  picture: string;
+  givenName?: string;
+  familyName?: string;
+}
+
+export interface GoogleAuthResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  scope: string;
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\core\services\auth.service.ts -----
+import { Injectable, signal } from '@angular/core';
+import { Router } from '@angular/router';
+import { environment } from '../../../environments/environment';
+import { User } from '../models/user.model';
+
+declare const google: any;
+declare const gapi: any;
+
+@Injectable({
+  providedIn: 'root'
+})
+export class AuthService {
+  private currentUser = signal<User | null>(null);
+  private accessToken = signal<string | null>(null);
+  private tokenClient: any;
+  private gapiInitialized = false;
+
+  readonly user = this.currentUser.asReadonly();
+  readonly token = this.accessToken.asReadonly();
+
+  constructor(private router: Router) {
+    this.loadUserFromStorage();
+  }
+
+  /**
+   * Initialize Google API and Identity Services
+   */
+  async initialize(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // Initialize Google API Client
+      gapi.load('client', async () => {
+        try {
+          await gapi.client.init({
+            discoveryDocs: environment.google.discoveryDocs,
+          });
+          this.gapiInitialized = true;
+
+          // Initialize Google Identity Services
+          this.tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: environment.google.clientId,
+            scope: environment.google.scopes.join(' '),
+            callback: (response: any) => {
+              if (response.error) {
+                console.error('Token error:', response.error);
+                reject(response.error);
+                return;
+              }
+              this.handleTokenResponse(response);
+              resolve();
+            },
+          });
+
+          resolve();
+        } catch (error) {
+          console.error('Error initializing Google API:', error);
+          reject(error);
+        }
+      });
+    });
+  }
+
+  /**
+   * Sign in with Google
+   */
+  async signIn(): Promise<void> {
+    if (!this.tokenClient) {
+      await this.initialize();
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        // Request access token
+        this.tokenClient.callback = async (response: any) => {
+          if (response.error) {
+            console.error('Sign-in error:', response.error);
+            reject(response.error);
+            return;
+          }
+
+          await this.handleTokenResponse(response);
+          resolve();
+        };
+
+        this.tokenClient.requestAccessToken({ prompt: 'consent' });
+      } catch (error) {
+        console.error('Sign-in error:', error);
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Handle token response and fetch user info
+   */
+  private async handleTokenResponse(response: any): Promise<void> {
+    const token = response.access_token;
+    this.accessToken.set(token);
+    sessionStorage.setItem('access_token', token);
+
+    // Set token for gapi
+    gapi.client.setToken({ access_token: token });
+
+    // Fetch user info
+    await this.fetchUserInfo(token);
+
+    // Navigate to dashboard
+    this.router.navigate(['/dashboard']);
+  }
+
+  /**
+   * Fetch user information from Google
+   */
+  private async fetchUserInfo(token: string): Promise<void> {
+    try {
+      const response = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch user info');
+      }
+
+      const userInfo = await response.json();
+      
+      const user: User = {
+        id: userInfo.id,
+        email: userInfo.email,
+        name: userInfo.name,
+        picture: userInfo.picture,
+        givenName: userInfo.given_name,
+        familyName: userInfo.family_name
+      };
+
+      this.currentUser.set(user);
+      sessionStorage.setItem('user', JSON.stringify(user));
+    } catch (error) {
+      console.error('Error fetching user info:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Sign out
+   */
+  signOut(): void {
+    // Revoke token
+    const token = this.accessToken();
+    if (token) {
+      google.accounts.oauth2.revoke(token, () => {
+        console.log('Token revoked');
+      });
+    }
+
+    // Clear state
+    this.currentUser.set(null);
+    this.accessToken.set(null);
+    sessionStorage.removeItem('access_token');
+    sessionStorage.removeItem('user');
+
+    // Reset gapi token
+    if (this.gapiInitialized) {
+      gapi.client.setToken(null);
+    }
+
+    // Navigate to login
+    this.router.navigate(['/login']);
+  }
+
+  /**
+   * Check if user is authenticated
+   */
+  isAuthenticated(): boolean {
+    return this.accessToken() !== null && this.currentUser() !== null;
+  }
+
+  /**
+   * Get current access token
+   */
+  getAccessToken(): string | null {
+    return this.accessToken();
+  }
+
+  /**
+   * Load user and token from storage
+   */
+  private loadUserFromStorage(): void {
+    const token = sessionStorage.getItem('access_token');
+    const userJson = sessionStorage.getItem('user');
+
+    if (token && userJson) {
+      this.accessToken.set(token);
+      this.currentUser.set(JSON.parse(userJson));
+
+      // Set token for gapi if initialized
+      if (typeof gapi !== 'undefined' && gapi.client) {
+        gapi.client.setToken({ access_token: token });
+      }
+    }
+  }
+
+  /**
+   * Refresh token if needed
+   */
+  async refreshTokenIfNeeded(): Promise<void> {
+    const token = this.accessToken();
+    if (!token) {
+      return;
+    }
+
+    // Check if token is still valid by making a test request
+    try {
+      const response = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        // Token expired, request new one
+        await this.signIn();
+      }
+    } catch (error) {
+      console.error('Error checking token validity:', error);
+      // Request new token
+      await this.signIn();
+    }
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\core\services\drive.service.ts -----
+import { Injectable } from '@angular/core';
+import { environment } from '../../../environments/environment';
+import { DriveFile, DriveFileListResponse } from '../models/drive-file.model';
+
+declare const gapi: any;
+
+@Injectable({
+  providedIn: 'root'
+})
+export class DriveService {
+
+  /**
+   * List files from the shared folder
+   */
+  async listFiles(pageSize: number = 50, orderBy: string = 'modifiedTime desc'): Promise<DriveFile[]> {
+    try {
+      const response = await gapi.client.drive.files.list({
+        q: `'${environment.google.sharedFolderId}' in parents and trashed=false`,
+        pageSize: pageSize,
+        fields: 'files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink, thumbnailLink, iconLink)',
+        orderBy: orderBy
+      });
+
+      return response.result.files || [];
+    } catch (error) {
+      console.error('Error listing files:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get file metadata
+   */
+  async getFileMetadata(fileId: string): Promise<DriveFile> {
+    try {
+      const response = await gapi.client.drive.files.get({
+        fileId: fileId,
+        fields: 'id, name, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink, thumbnailLink, iconLink'
+      });
+
+      return response.result;
+    } catch (error) {
+      console.error('Error getting file metadata:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a file
+   */
+  async deleteFile(fileId: string): Promise<void> {
+    try {
+      await gapi.client.drive.files.delete({
+        fileId: fileId
+      });
+    } catch (error) {
+      console.error('Error deleting file:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Download file content
+   */
+  async downloadFile(fileId: string, fileName: string): Promise<void> {
+    try {
+      const response = await gapi.client.drive.files.get({
+        fileId: fileId,
+        alt: 'media'
+      });
+
+      // Create blob and download
+      const blob = new Blob([response.body], { type: response.headers['Content-Type'] });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading file:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Search files by name
+   */
+  async searchFiles(searchTerm: string): Promise<DriveFile[]> {
+    try {
+      const query = `'${environment.google.sharedFolderId}' in parents and name contains '${searchTerm}' and trashed=false`;
+      
+      const response = await gapi.client.drive.files.list({
+        q: query,
+        pageSize: 50,
+        fields: 'files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink, thumbnailLink, iconLink)',
+        orderBy: 'modifiedTime desc'
+      });
+
+      return response.result.files || [];
+    } catch (error) {
+      console.error('Error searching files:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Format file size to human-readable format
+   */
+  formatFileSize(bytes: number): string {
+    if (!bytes || bytes === 0) return '0 Bytes';
+
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+  }
+
+  /**
+   * Get file icon based on mime type
+   */
+  getFileIcon(mimeType: string): string {
+    const iconMap: { [key: string]: string } = {
+      'application/pdf': 'ðŸ“„',
+      'image/jpeg': 'ðŸ–¼ï¸',
+      'image/jpg': 'ðŸ–¼ï¸',
+      'image/png': 'ðŸ–¼ï¸',
+      'image/gif': 'ðŸ–¼ï¸',
+      'application/vnd.google-apps.folder': 'ðŸ“',
+      'application/vnd.google-apps.document': 'ðŸ“',
+      'application/vnd.google-apps.spreadsheet': 'ðŸ“Š',
+      'application/vnd.google-apps.presentation': 'ðŸ“½ï¸',
+    };
+
+    return iconMap[mimeType] || 'ðŸ“Ž';
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\core\services\file-upload.service.ts -----
+import { Injectable } from '@angular/core';
+import { BehaviorSubject, Observable } from 'rxjs';
+import { environment } from '../../../environments/environment';
+import { UploadProgress } from '../models/drive-file.model';
+import { AuthService } from './auth.service';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class FileUploadService {
+  private uploadProgressSubject = new BehaviorSubject<UploadProgress[]>([]);
+  public uploadProgress$: Observable<UploadProgress[]> = this.uploadProgressSubject.asObservable();
+
+  private readonly ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+  private readonly MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+  constructor(private authService: AuthService) {}
+
+  /**
+   * Validate file before upload
+   */
+  validateFile(file: File): { valid: boolean; error?: string } {
+    // Check file type
+    if (!this.ALLOWED_TYPES.includes(file.type)) {
+      return {
+        valid: false,
+        error: `File type not allowed. Allowed types: PDF, JPG, PNG`
+      };
+    }
+
+    // Check file size
+    if (file.size > this.MAX_FILE_SIZE) {
+      return {
+        valid: false,
+        error: `File size exceeds 10MB limit`
+      };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Upload file to Google Drive
+   */
+  async uploadFile(file: File): Promise<string> {
+    // Validate file
+    const validation = this.validateFile(file);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
+    const accessToken = this.authService.getAccessToken();
+    if (!accessToken) {
+      throw new Error('No access token available');
+    }
+
+    // Initialize progress
+    const progress: UploadProgress = {
+      fileName: file.name,
+      progress: 0,
+      status: 'uploading'
+    };
+    this.addProgress(progress);
+
+    try {
+      // Create metadata
+      const metadata = {
+        name: file.name,
+        mimeType: file.type,
+        parents: [environment.google.sharedFolderId]
+      };
+
+      // Prepare multipart request
+      const boundary = '-------314159265358979323846';
+      const delimiter = "\r\n--" + boundary + "\r\n";
+      const closeDelimiter = "\r\n--" + boundary + "--";
+
+      // Read file as base64
+      const fileContent = await this.readFileAsBase64(file);
+
+      // Build multipart body
+      const multipartRequestBody =
+        delimiter +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(metadata) +
+        delimiter +
+        'Content-Type: ' + file.type + '\r\n' +
+        'Content-Transfer-Encoding: base64\r\n\r\n' +
+        fileContent +
+        closeDelimiter;
+
+      // Upload using XMLHttpRequest for progress tracking
+      const fileId = await this.uploadWithProgress(
+        multipartRequestBody,
+        boundary,
+        accessToken,
+        (progressEvent) => {
+          const percentComplete = Math.round((progressEvent.loaded / progressEvent.total) * 100);
+          this.updateProgress(file.name, percentComplete);
+        }
+      );
+
+      // Mark as completed
+      this.updateProgress(file.name, 100, 'completed');
+
+      return fileId;
+    } catch (error) {
+      console.error('Upload error:', error);
+      this.updateProgress(file.name, 0, 'error', error instanceof Error ? error.message : 'Upload failed');
+      throw error;
+    }
+  }
+
+  /**
+   * Upload multiple files
+   */
+  async uploadFiles(files: FileList | File[]): Promise<string[]> {
+    const fileArray = Array.from(files);
+    const uploadPromises = fileArray.map(file => this.uploadFile(file));
+
+    try {
+      const fileIds = await Promise.all(uploadPromises);
+      return fileIds;
+    } catch (error) {
+      console.error('Error uploading files:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Upload with progress tracking using XMLHttpRequest
+   */
+  private uploadWithProgress(
+    body: string,
+    boundary: string,
+    accessToken: string,
+    onProgress: (event: ProgressEvent) => void
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+
+      xhr.upload.addEventListener('progress', onProgress);
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status === 200) {
+          const response = JSON.parse(xhr.responseText);
+          resolve(response.id);
+        } else {
+          reject(new Error(`Upload failed with status ${xhr.status}`));
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        reject(new Error('Upload failed'));
+      });
+
+      xhr.open('POST', 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart');
+      xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+      xhr.setRequestHeader('Content-Type', `multipart/related; boundary=${boundary}`);
+
+      xhr.send(body);
+    });
+  }
+
+  /**
+   * Read file as base64
+   */
+  private readFileAsBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  /**
+   * Add progress entry
+   */
+  private addProgress(progress: UploadProgress): void {
+    const current = this.uploadProgressSubject.value;
+    this.uploadProgressSubject.next([...current, progress]);
+  }
+
+  /**
+   * Update progress entry
+   */
+  private updateProgress(
+    fileName: string,
+    progress: number,
+    status?: 'uploading' | 'completed' | 'error',
+    error?: string
+  ): void {
+    const current = this.uploadProgressSubject.value;
+    const updated = current.map(item => {
+      if (item.fileName === fileName) {
+        return {
+          ...item,
+          progress,
+          status: status || item.status,
+          error: error || item.error
+        };
+      }
+      return item;
+    });
+    this.uploadProgressSubject.next(updated);
+  }
+
+  /**
+   * Clear completed uploads
+   */
+  clearCompletedUploads(): void {
+    const current = this.uploadProgressSubject.value;
+    const filtered = current.filter(item => item.status === 'uploading');
+    this.uploadProgressSubject.next(filtered);
+  }
+
+  /**
+   * Clear all uploads
+   */
+  clearAllUploads(): void {
+    this.uploadProgressSubject.next([]);
+  }
+
+  /**
+   * Get allowed file types
+   */
+  getAllowedTypes(): string[] {
+    return this.ALLOWED_TYPES;
+  }
+
+  /**
+   * Get allowed file extensions for input accept attribute
+   */
+  getAcceptAttribute(): string {
+    return '.pdf,.jpg,.jpeg,.png';
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\core\services\theme.service.ts -----
+import { Injectable, signal, effect } from '@angular/core';
+
+export type Theme = 'light' | 'dark';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class ThemeService {
+  private currentTheme = signal<Theme>(this.getInitialTheme());
+
+  readonly theme = this.currentTheme.asReadonly();
+
+  constructor() {
+    // Apply theme on initialization
+    effect(() => {
+      this.applyTheme(this.currentTheme());
+    });
+  }
+
+  /**
+   * Toggle between light and dark theme
+   */
+  toggleTheme(): void {
+    const newTheme = this.currentTheme() === 'light' ? 'dark' : 'light';
+    this.setTheme(newTheme);
+  }
+
+  /**
+   * Set specific theme
+   */
+  setTheme(theme: Theme): void {
+    this.currentTheme.set(theme);
+    localStorage.setItem('theme', theme);
+  }
+
+  /**
+   * Get initial theme from localStorage or system preference
+   */
+  private getInitialTheme(): Theme {
+    const stored = localStorage.getItem('theme') as Theme;
+    if (stored) {
+      return stored;
+    }
+
+    // Check system preference
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      return 'dark';
+    }
+
+    return 'light';
+  }
+
+  /**
+   * Apply theme to document
+   */
+  private applyTheme(theme: Theme): void {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+
+  /**
+   * Check if current theme is dark
+   */
+  isDark(): boolean {
+    return this.currentTheme() === 'dark';
+  }
+}
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\core\services\toast.service.ts -----
+import { Injectable, signal } from '@angular/core';
+
+export type ToastType = 'success' | 'error' | 'info' | 'warning';
+
+export interface Toast {
+  id: string;
+  type: ToastType;
+  message: string;
+  duration?: number;
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class ToastService {
+  private toasts = signal<Toast[]>([]);
+  readonly toast$ = this.toasts.asReadonly();
+
+  success(message: string, duration: number = 3000): void {
+    this.show('success', message, duration);
+  }
+
+  error(message: string, duration: number = 4000): void {
+    this.show('error', message, duration);
+  }
+
+  info(message: string, duration: number = 3000): void {
+    this.show('info', message, duration);
+  }
+
+  warning(message: string, duration: number = 3000): void {
+    this.show('warning', message, duration);
+  }
+
+  private show(type: ToastType, message: string, duration: number): void {
+    const id = Math.random().toString(36).substring(7);
+    const toast: Toast = { id, type, message, duration };
+
+    this.toasts.update(toasts => [...toasts, toast]);
+
+    if (duration > 0) {
+      setTimeout(() => {
+        this.remove(id);
+      }, duration);
+    }
+  }
+
+  remove(id: string): void {
+    this.toasts.update(toasts => toasts.filter(t => t.id !== id));
+  }
+
+  clear(): void {
+    this.toasts.set([]);
+  }
+}
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\auth\login\login.component.css -----
+.login-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 20px;
+}
+
+.login-card {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  width: 100%;
+  max-width: 450px;
+  overflow: hidden;
+}
+
+.logo-section {
+  background: linear-gradient(135deg, #0066cc 0%, #003d7a 100%);
+  padding: 40px 30px;
+  text-align: center;
+  color: white;
+}
+
+.app-title {
+  font-size: 32px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.5px;
+}
+
+.app-subtitle {
+  margin: 10px 0 0;
+  font-size: 16px;
+  opacity: 0.9;
+}
+
+.login-content {
+  padding: 40px 30px;
+}
+
+.welcome-text {
+  font-size: 28px;
+  font-weight: 600;
+  margin: 0 0 10px;
+  color: #333;
+}
+
+.instruction-text {
+  color: #666;
+  margin: 0 0 30px;
+  font-size: 15px;
+}
+
+.error-message {
+  background: #fee;
+  border: 1px solid #fcc;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  color: #c33;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.error-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.google-signin-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: white;
+  border: 2px solid #ddd;
+  padding: 14px 24px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 500;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.google-signin-btn:hover:not(:disabled) {
+  background: #f8f9fa;
+  border-color: #ccc;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.google-signin-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.google-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.info-section {
+  margin-top: 30px;
+  padding-top: 30px;
+  border-top: 1px solid #eee;
+}
+
+.info-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #666;
+  font-size: 14px;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.info-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+@media (max-width: 480px) {
+  .login-card {
+    border-radius: 12px;
+  }
+
+  .logo-section {
+    padding: 30px 20px;
+  }
+
+  .app-title {
+    font-size: 26px;
+  }
+
+  .login-content {
+    padding: 30px 20px;
+  }
+
+  .welcome-text {
+    font-size: 24px;
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\auth\login\login.component.html -----
+<div class="login-container">
+  <div class="login-card">
+    <div class="logo-section">
+      <h1 class="app-title">AVEVA Invoice</h1>
+      <p class="app-subtitle">Invoice Management System</p>
+    </div>
+
+    <div class="login-content">
+      <h2 class="welcome-text">Welcome</h2>
+      <p class="instruction-text">Sign in with your Google account to continue</p>
+
+      @if (errorMessage) {
+        <div class="error-message">
+          <svg class="error-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          {{ errorMessage }}
+        </div>
+      }
+
+      <button 
+        class="google-signin-btn" 
+        (click)="signInWithGoogle()"
+        [disabled]="isLoading">
+        @if (isLoading) {
+          <div class="spinner"></div>
+          <span>Signing in...</span>
+        } @else {
+          <svg class="google-icon" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+          </svg>
+          <span>Sign in with Google</span>
+        }
+      </button>
+
+      <div class="info-section">
+        <p class="info-text">
+          <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          You'll need Google Drive access to upload and manage invoices
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\auth\login\login.component.ts -----
+import { Component, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { AuthService } from '../../../core/services/auth.service';
+
+@Component({
+  selector: 'app-login',
+  standalone: true,
+  imports: [CommonModule],
+  templateUrl: './login.component.html',
+  styleUrls: ['./login.component.css']
+})
+export class LoginComponent implements OnInit {
+  isLoading = false;
+  errorMessage = '';
+
+  constructor(private authService: AuthService) {}
+
+  async ngOnInit(): Promise<void> {
+    // Initialize Google API
+    try {
+      await this.authService.initialize();
+    } catch (error) {
+      console.error('Error initializing Google API:', error);
+      this.errorMessage = 'Failed to initialize. Please refresh the page.';
+    }
+  }
+
+  async signInWithGoogle(): Promise<void> {
+    this.isLoading = true;
+    this.errorMessage = '';
+
+    try {
+      await this.authService.signIn();
+    } catch (error) {
+      console.error('Sign-in error:', error);
+      this.errorMessage = 'Sign-in failed. Please try again.';
+      this.isLoading = false;
+    }
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\dashboard\dashboard.component.css -----
+.dashboard-container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.page-header {
+  margin-bottom: 32px;
+}
+
+.page-title {
+  font-size: 28px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 8px;
+}
+
+.page-subtitle {
+  font-size: 16px;
+  color: #6b7280;
+  margin: 0;
+}
+
+.dashboard-content {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+}
+
+.coming-soon-card {
+  background: white;
+  border-radius: 12px;
+  padding: 48px;
+  text-align: center;
+  max-width: 600px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.coming-soon-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 120px;
+  height: 120px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 50%;
+  color: white;
+  margin-bottom: 24px;
+}
+
+.coming-soon-title {
+  font-size: 32px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0 0 16px;
+}
+
+.coming-soon-description {
+  font-size: 18px;
+  color: #6b7280;
+  margin: 0 0 32px;
+  line-height: 1.6;
+}
+
+.coming-soon-features {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-top: 32px;
+}
+
+.feature-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 8px;
+  font-size: 15px;
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.feature-item svg {
+  color: #10b981;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .coming-soon-card {
+    padding: 32px 24px;
+  }
+
+  .coming-soon-icon {
+    width: 100px;
+    height: 100px;
+  }
+
+  .coming-soon-title {
+    font-size: 26px;
+  }
+
+  .coming-soon-description {
+    font-size: 16px;
+  }
+
+  .coming-soon-features {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\dashboard\dashboard.component.html -----
+<div class="dashboard-container">
+  <div class="page-header">
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">Welcome to AVEVA Invoice Management System</p>
+  </div>
+
+  <div class="dashboard-content">
+    <div class="coming-soon-card">
+      <div class="coming-soon-icon">
+        <svg width="64" height="64" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+        </svg>
+      </div>
+      <h2 class="coming-soon-title">Dashboard Coming Soon</h2>
+      <p class="coming-soon-description">
+        We're working on bringing you insightful analytics and reports. Stay tuned!
+      </p>
+      <div class="coming-soon-features">
+        <div class="feature-item">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+          </svg>
+          <span>Invoice Analytics</span>
+        </div>
+        <div class="feature-item">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+          </svg>
+          <span>Upload Statistics</span>
+        </div>
+        <div class="feature-item">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+          </svg>
+          <span>Recent Activity</span>
+        </div>
+        <div class="feature-item">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+          </svg>
+          <span>File Insights</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\dashboard\dashboard.component.ts -----
+import { Component } from '@angular/core';
+import { CommonModule } from '@angular/common';
+
+@Component({
+  selector: 'app-dashboard',
+  standalone: true,
+  imports: [CommonModule],
+  templateUrl: './dashboard.component.html',
+  styleUrls: ['./dashboard.component.css']
+})
+export class DashboardComponent {
+  
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\files\files.component.css -----
+.files-container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 32px;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.header-left {
+  flex: 1;
+  min-width: 250px;
+}
+
+.page-title {
+  font-size: 28px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 8px;
+}
+
+.page-subtitle {
+  font-size: 16px;
+  color: #6b7280;
+  margin: 0;
+}
+
+.header-right {
+  display: flex;
+  gap: 12px;
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-refresh {
+  background: white;
+  color: #4b5563;
+  border: 1px solid #d1d5db;
+}
+
+.btn-refresh:hover:not(:disabled) {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
+.btn-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.search-section {
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.search-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 16px;
+  width: 20px;
+  height: 20px;
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  padding: 12px 48px 12px 48px;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 15px;
+  transition: border-color 0.2s ease;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: #0066cc;
+}
+
+.clear-search-btn {
+  position: absolute;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.clear-search-btn:hover {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.alert svg {
+  flex-shrink: 0;
+}
+
+.alert-error {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+}
+
+.loading-text {
+  margin-top: 16px;
+  font-size: 16px;
+  color: #6b7280;
+}
+
+.empty-state {
+  padding: 80px 20px;
+  text-align: center;
+}
+
+.empty-icon {
+  width: 80px;
+  height: 80px;
+  color: #d1d5db;
+  margin-bottom: 24px;
+}
+
+.empty-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 12px;
+}
+
+.empty-description {
+  font-size: 16px;
+  color: #6b7280;
+  margin: 0;
+}
+
+.files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.file-card {
+  padding: 20px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.file-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.file-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.file-icon {
+  font-size: 32px;
+  line-height: 1;
+}
+
+.file-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.action-btn:hover {
+  background: #f3f4f6;
+  color: #0066cc;
+}
+
+.delete-btn:hover {
+  background: #fee;
+  color: #dc2626;
+}
+
+.file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.file-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.meta-item svg {
+  flex-shrink: 0;
+}
+
+.files-stats {
+  padding: 16px 0;
+  text-align: center;
+  border-top: 1px solid #e5e7eb;
+}
+
+.stats-text {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .files-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .header-right {
+    width: 100%;
+  }
+
+  .btn {
+    justify-content: center;
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\files\files.component.html -----
+<div class="files-container">
+  <div class="page-header">
+    <div class="header-left">
+      <h1 class="page-title">Uploaded Items</h1>
+      <p class="page-subtitle">Manage your uploaded invoices stored in Google Drive</p>
+    </div>
+    <div class="header-right">
+      <button class="btn btn-refresh" (click)="refresh()" [disabled]="isLoading">
+        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+        </svg>
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <div class="search-section card">
+    <div class="search-bar">
+      <svg class="search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+      </svg>
+      <input
+        type="text"
+        class="search-input"
+        placeholder="Search files by name..."
+        [(ngModel)]="searchTerm"
+        (input)="onSearch()">
+      @if (searchTerm) {
+        <button class="clear-search-btn" (click)="clearSearch()">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      }
+    </div>
+  </div>
+
+  @if (isLoading) {
+    <div class="loading-container">
+      <div class="spinner"></div>
+      <p class="loading-text">Loading files...</p>
+    </div>
+  } @else if (filteredFiles.length === 0) {
+    <div class="empty-state card">
+      <svg class="empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+      </svg>
+      <h3 class="empty-title">No files found</h3>
+      <p class="empty-description">
+        @if (searchTerm) {
+          Try a different search term
+        } @else {
+          Upload your first invoice to get started
+        }
+      </p>
+    </div>
+  } @else {
+    <div class="files-grid">
+      @for (file of filteredFiles; track file.id) {
+        <div class="file-card card">
+          <div class="file-header">
+            <span class="file-icon">{{ getFileIcon(file.mimeType) }}</span>
+            <div class="file-actions">
+              <button class="action-btn" (click)="openInDrive(file)" title="Open in Drive">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                </svg>
+              </button>
+              <button class="action-btn" (click)="downloadFile(file)" title="Download">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg>
+              </button>
+              <button class="action-btn delete-btn" (click)="deleteFile(file)" title="Delete">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="file-info">
+            <h3 class="file-name" [title]="file.name">{{ file.name }}</h3>
+            <div class="file-meta">
+              <span class="meta-item">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                </svg>
+                {{ formatDate(file.createdTime) }}
+              </span>
+              <span class="meta-item">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+                {{ formatFileSize(file.size) }}
+              </span>
+            </div>
+          </div>
+        </div>
+      }
+    </div>
+
+    <div class="files-stats">
+      <p class="stats-text">Showing {{ filteredFiles.length }} file(s)</p>
+    </div>
+  }
+</div>
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\files\files.component.ts -----
+import { Component, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { DriveService } from '../../core/services/drive.service';
+import { DriveFile } from '../../core/models/drive-file.model';
+import { ToastService } from '../../core/services/toast.service';
+
+
+@Component({
+  selector: 'app-files',
+  standalone: true,
+  imports: [CommonModule, FormsModule],
+  templateUrl: './files.component.html',
+  styleUrls: ['./files.component.css']
+})
+export class FilesComponent implements OnInit {
+  files: DriveFile[] = [];
+  filteredFiles: DriveFile[] = [];
+  isLoading = false;
+  searchTerm = '';
+
+  
+  constructor(
+  private driveService: DriveService,
+  private toastService: ToastService
+) {}
+
+  async ngOnInit(): Promise<void> {
+    await this.loadFiles();
+  }
+  async loadFiles(): Promise<void> {
+  this.isLoading = true;
+
+  try {
+    this.files = await this.driveService.listFiles(50);
+    this.filteredFiles = [...this.files];
+    this.toastService.success('Files loaded successfully');
+  } catch (error) {
+    console.error('Error loading files:', error);
+    this.toastService.error('Failed to load files. Please try again.');
+  } finally {
+    this.isLoading = false;
+  }
+}
+
+
+  async onSearch(): Promise<void> {
+    if (!this.searchTerm.trim()) {
+      this.filteredFiles = [...this.files];
+      return;
+    }
+
+    try {
+      this.filteredFiles = await this.driveService.searchFiles(this.searchTerm);
+    } catch (error) {
+      console.error('Search error:', error);
+    }
+  }
+
+  clearSearch(): void {
+    this.searchTerm = '';
+    this.filteredFiles = [...this.files];
+  }
+
+  async downloadFile(file: DriveFile): Promise<void> {
+  try {
+    await this.driveService.downloadFile(file.id, file.name);
+    this.toastService.success(`Downloading ${file.name}`);
+  } catch (error) {
+    console.error('Download error:', error);
+    this.toastService.error('Failed to download file');
+  }
+}
+
+
+  async deleteFile(file: DriveFile): Promise<void> {
+  if (!confirm(`Are you sure you want to delete "${file.name}"?`)) {
+    return;
+  }
+
+  try {
+    await this.driveService.deleteFile(file.id);
+    this.toastService.success(`Deleted ${file.name}`);
+    await this.loadFiles();
+  } catch (error) {
+    console.error('Delete error:', error);
+    this.toastService.error('Failed to delete file');
+  }
+}
+
+  formatFileSize(size: string | undefined): string {
+    if (!size) return 'N/A';
+    return this.driveService.formatFileSize(parseInt(size, 10));
+  }
+
+  formatDate(dateString: string): string {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
+  getFileIcon(mimeType: string): string {
+    return this.driveService.getFileIcon(mimeType);
+  }
+
+  openInDrive(file: DriveFile): void {
+    if (file.webViewLink) {
+      window.open(file.webViewLink, '_blank');
+    }
+  }
+
+  async refresh(): Promise<void> {
+    await this.loadFiles();
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\upload\upload-invoice.component.css -----
+.upload-container {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.page-header {
+  margin-bottom: 32px;
+}
+
+.page-title {
+  font-size: 28px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 8px;
+}
+
+.page-subtitle {
+  font-size: 16px;
+  color: #6b7280;
+  margin: 0;
+}
+
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.alert svg {
+  flex-shrink: 0;
+}
+
+.alert-success {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+}
+
+.alert-error {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+
+.upload-section {
+  margin-bottom: 32px;
+}
+
+.drop-zone {
+  padding: 48px;
+  text-align: center;
+  border: 3px dashed #d1d5db;
+  background: #fafafa;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.drop-zone:hover,
+.drop-zone.drag-over {
+  border-color: #0066cc;
+  background: #eff6ff;
+}
+
+.drop-zone-content {
+  pointer-events: none;
+}
+
+.upload-icon {
+  width: 64px;
+  height: 64px;
+  color: #9ca3af;
+  margin-bottom: 16px;
+}
+
+.drop-zone:hover .upload-icon,
+.drop-zone.drag-over .upload-icon {
+  color: #0066cc;
+}
+
+.drop-zone-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 8px;
+}
+
+.drop-zone-text {
+  color: #6b7280;
+  margin: 16px 0;
+  font-size: 15px;
+}
+
+.btn-primary {
+  pointer-events: auto;
+  display: inline-block;
+  padding: 12px 32px;
+  background: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+  background: #0052a3;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 102, 204, 0.3);
+}
+
+.file-input {
+  display: none;
+}
+
+.drop-zone-info {
+  margin-top: 16px;
+  font-size: 13px;
+  color: #9ca3af;
+}
+
+.progress-section {
+  margin-top: 24px;
+  padding: 24px;
+}
+
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.progress-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0;
+}
+
+.btn-clear {
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-clear:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.progress-item {
+  padding: 16px;
+  background: #f9fafb;
+  border-radius: 8px;
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.progress-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.progress-status {
+  font-size: 13px;
+}
+
+.status-uploading {
+  color: #0066cc;
+}
+
+.status-completed {
+  color: #10b981;
+}
+
+.status-error {
+  color: #ef4444;
+}
+
+.progress-bar-container {
+  height: 8px;
+  background: #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progress-bar {
+  height: 100%;
+  transition: width 0.3s ease;
+  border-radius: 4px;
+}
+
+.progress-percentage {
+  text-align: right;
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.info-section {
+  padding: 32px;
+  background: white;
+}
+
+.info-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 24px;
+}
+
+.info-steps {
+  display: grid;
+  gap: 24px;
+}
+
+.info-step {
+  display: flex;
+  gap: 16px;
+}
+
+.step-number {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0066cc 0%, #003d7a 100%);
+  color: white;
+  border-radius: 50%;
+  font-size: 18px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.step-content {
+  flex: 1;
+}
+
+.step-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 8px;
+}
+
+.step-description {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0;
+  line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+  .drop-zone {
+    padding: 32px 24px;
+  }
+
+  .upload-icon {
+    width: 48px;
+    height: 48px;
+  }
+
+  .drop-zone-title {
+    font-size: 18px;
+  }
+
+  .progress-section {
+    padding: 16px;
+  }
+
+  .info-section {
+    padding: 24px 16px;
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\upload\upload-invoice.component.html -----
+<div class="upload-container">
+  <div class="page-header">
+    <h1 class="page-title">Upload Invoice</h1>
+    <p class="page-subtitle">Upload PDF, JPG, or PNG files directly to Google Drive</p>
+  </div>
+
+  
+
+  <div class="upload-section">
+    <div 
+      class="drop-zone card"
+      appDragDrop
+      (filesDropped)="onFilesDropped($event)">
+      <div class="drop-zone-content">
+        <svg class="upload-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+        </svg>
+        <h3 class="drop-zone-title">Drag & Drop Files Here</h3>
+        <p class="drop-zone-text">or</p>
+        <label for="file-input" class="btn btn-primary">
+          Browse Files
+        </label>
+        <input
+          id="file-input"
+          type="file"
+          multiple
+          [accept]="getAcceptAttribute()"
+          (change)="onFileSelected($event)"
+          class="file-input">
+        <p class="drop-zone-info">Supported formats: PDF, JPG, PNG (Max 10MB)</p>
+      </div>
+    </div>
+
+    @if (uploadProgress.length > 0) {
+      <div class="progress-section card">
+        <div class="progress-header">
+          <h3 class="progress-title">Upload Progress</h3>
+          @if (!isUploading) {
+            <button class="btn-clear" (click)="clearCompleted()">Clear Completed</button>
+          }
+        </div>
+
+        <div class="progress-list">
+          @for (progress of uploadProgress; track progress.fileName) {
+            <div class="progress-item">
+              <div class="progress-info">
+                <div class="progress-name">{{ progress.fileName }}</div>
+                <div class="progress-status">
+                  @if (progress.status === 'uploading') {
+                    <span class="status-uploading">Uploading...</span>
+                  } @else if (progress.status === 'completed') {
+                    <span class="status-completed">âœ“ Completed</span>
+                  } @else if (progress.status === 'error') {
+                    <span class="status-error">âœ— {{ progress.error || 'Failed' }}</span>
+                  }
+                </div>
+              </div>
+              <div class="progress-bar-container">
+                <div 
+                  class="progress-bar"
+                  [style.width.%]="getProgressPercentage(progress)"
+                  [style.background-color]="getProgressColor(progress)">
+                </div>
+              </div>
+              <div class="progress-percentage">{{ getProgressPercentage(progress) }}%</div>
+            </div>
+          }
+        </div>
+      </div>
+    }
+  </div>
+
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\features\upload\upload-invoice.component.ts -----
+import { Component, OnInit, OnDestroy } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { Router } from '@angular/router';
+import { Subscription } from 'rxjs';
+import { FileUploadService } from '../../core/services/file-upload.service';
+import { UploadProgress } from '../../core/models/drive-file.model';
+import { DragDropDirective } from '../../shared/directives/drag-drop.directive';
+import { ToastService } from '../../core/services/toast.service';
+
+@Component({
+  selector: 'app-upload-invoice',
+  standalone: true,
+  imports: [CommonModule, DragDropDirective],
+  templateUrl: './upload-invoice.component.html',
+  styleUrls: ['./upload-invoice.component.css']
+})
+export class UploadInvoiceComponent implements OnInit, OnDestroy {
+  uploadProgress: UploadProgress[] = [];
+  isUploading = false;
+
+  private uploadSubscription?: Subscription;
+
+  constructor(
+    private fileUploadService: FileUploadService,
+    private toastService: ToastService,
+    private router: Router
+  ) {}
+
+  ngOnInit(): void {
+    this.uploadSubscription = this.fileUploadService.uploadProgress$.subscribe(
+      progress => {
+        this.uploadProgress = progress;
+        this.isUploading = progress.some(p => p.status === 'uploading');
+      }
+    );
+  }
+
+  ngOnDestroy(): void {
+    this.uploadSubscription?.unsubscribe();
+  }
+
+  onFileSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      this.uploadFiles(input.files);
+    }
+  }
+
+  onFilesDropped(files: FileList): void {
+    this.uploadFiles(files);
+  }
+
+  async uploadFiles(files: FileList): Promise<void> {
+    try {
+      await this.fileUploadService.uploadFiles(files);
+      this.toastService.success(`Successfully uploaded ${files.length} file(s)!`);
+      
+      setTimeout(() => {
+        this.router.navigate(['/files']);
+      }, 1500);
+    } catch (error) {
+      console.error('Upload error:', error);
+      this.toastService.error(error instanceof Error ? error.message : 'Upload failed');
+    }
+  }
+
+  clearCompleted(): void {
+    this.fileUploadService.clearCompletedUploads();
+  }
+
+  getAcceptAttribute(): string {
+    return this.fileUploadService.getAcceptAttribute();
+  }
+
+  getProgressPercentage(progress: UploadProgress): number {
+    return Math.round(progress.progress);
+  }
+
+  getProgressColor(progress: UploadProgress): string {
+    if (progress.status === 'completed') return '#10b981';
+    if (progress.status === 'error') return '#ef4444';
+    return '#0066cc';
+  }
+}
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\layout\layout.component.css -----
+.layout-container {
+  display: flex;
+  min-height: 100vh;
+  background-color: #f5f7fa;
+}
+
+.main-container {
+  flex: 1;
+  margin-left: 260px;
+  transition: margin-left 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.main-container.sidebar-closed {
+  margin-left: 0;
+}
+
+.content-area {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .main-container {
+    margin-left: 0;
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\layout\layout.component.html -----
+<div class="layout-container">
+  <app-sidebar [isOpen]="isSidebarOpen" />
+  
+  <div class="main-container" [class.sidebar-closed]="!isSidebarOpen">
+    <app-topbar (toggleSidebar)="toggleSidebar()" />
+    
+    <main class="content-area">
+      <router-outlet />
+    </main>
+  </div>
+</div>
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\layout\layout.component.ts -----
+import { Component } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { RouterOutlet } from '@angular/router';
+import { SidebarComponent } from '../sidebar/sidebar.component';
+import { TopbarComponent } from '../topbar/topbar.component';
+
+@Component({
+  selector: 'app-layout',
+  standalone: true,
+  imports: [CommonModule, RouterOutlet, SidebarComponent, TopbarComponent],
+  templateUrl: './layout.component.html',
+  styleUrls: ['./layout.component.css']
+})
+export class LayoutComponent {
+  isSidebarOpen = true;
+
+  toggleSidebar(): void {
+    this.isSidebarOpen = !this.isSidebarOpen;
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\sidebar\sidebar.component.css -----
+.sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 260px;
+  background: white;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s ease;
+  z-index: 100;
+}
+
+.sidebar.closed {
+  width: 70px;
+}
+
+.sidebar-header {
+  padding: 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  font-size: 18px;
+  color: #0066cc;
+}
+
+.logo-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.logo-text {
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar.closed .logo-text {
+  display: none;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 20px 0;
+  overflow-y: auto;
+}
+
+.nav-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.nav-item {
+  margin-bottom: 4px;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  color: #4b5563;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  border-left: 3px solid transparent;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.nav-link:hover {
+  background: #f3f4f6;
+  color: #0066cc;
+}
+
+.nav-link.active {
+  background: #eff6ff;
+  color: #0066cc;
+  border-left-color: #0066cc;
+}
+
+.nav-icon {
+  font-size: 20px;
+  min-width: 20px;
+  line-height: 1;
+}
+
+.nav-label {
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar.closed .nav-label {
+  display: none;
+}
+
+.sidebar-footer {
+  padding: 20px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 20px;
+  background: transparent;
+  border: none;
+  color: #dc2626;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 6px;
+}
+
+.logout-btn:hover {
+  background: #fee;
+}
+
+.sidebar.closed .logout-btn {
+  padding: 12px;
+  justify-content: center;
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    transform: translateX(-100%);
+  }
+
+  .sidebar.closed {
+    transform: translateX(0);
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\sidebar\sidebar.component.html -----
+<aside class="sidebar" [class.closed]="!isOpen">
+  <div class="sidebar-header">
+    <div class="logo">
+      <span class="logo-icon">âš¡</span>
+      @if (isOpen) {
+        <span class="logo-text">AVEVA Invoice</span>
+      }
+    </div>
+  </div>
+
+  <nav class="sidebar-nav">
+    <ul class="nav-list">
+      @for (item of menuItems; track item.route) {
+        <li class="nav-item">
+          <a 
+            [routerLink]="item.route" 
+            routerLinkActive="active"
+            class="nav-link">
+            <span class="nav-icon">{{ item.icon }}</span>
+            @if (isOpen) {
+              <span class="nav-label">{{ item.label }}</span>
+            }
+          </a>
+        </li>
+      }
+    </ul>
+  </nav>
+
+  <div class="sidebar-footer">
+    <button class="logout-btn" (click)="logout()">
+      <span class="nav-icon">ðŸšª</span>
+      @if (isOpen) {
+        <span class="nav-label">Logout</span>
+      }
+    </button>
+  </div>
+</aside>
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\sidebar\sidebar.component.ts -----
+import { Component, Input } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { Router, RouterLink, RouterLinkActive } from '@angular/router';
+import { AuthService } from '../../../core/services/auth.service';
+
+interface MenuItem {
+  label: string;
+  icon: string;
+  route: string;
+  action?: () => void;
+}
+
+@Component({
+  selector: 'app-sidebar',
+  standalone: true,
+  imports: [CommonModule, RouterLink, RouterLinkActive],
+  templateUrl: './sidebar.component.html',
+  styleUrls: ['./sidebar.component.css']
+})
+export class SidebarComponent {
+  @Input() isOpen = true;
+
+  menuItems: MenuItem[] = [
+    {
+      label: 'Dashboard',
+      icon: 'ðŸ“Š',
+      route: '/dashboard'
+    },
+    {
+      label: 'Upload Invoice',
+      icon: 'ðŸ“¤',
+      route: '/upload'
+    },
+    {
+      label: 'Files',
+      icon: 'ðŸ“',
+      route: '/files'
+    }
+  ];
+
+  constructor(
+    private authService: AuthService,
+    private router: Router
+  ) {}
+
+  logout(): void {
+    if (confirm('Are you sure you want to logout?')) {
+      this.authService.signOut();
+    }
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\toast\toast.component.css -----
+.toast-icon {
+  font-size: 20px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.toast-message {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.toast-close {
+  background: transparent;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.toast-close:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\toast\toast.component.html -----
+<div class="toast-container">
+  @for (toast of toasts(); track toast.id) {
+    <div class="toast toast-{{ toast.type }}">
+      <span class="toast-icon">{{ getIcon(toast.type) }}</span>
+      <span class="toast-message">{{ toast.message }}</span>
+      <button class="toast-close" (click)="close(toast.id)">
+        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+        </svg>
+      </button>
+    </div>
+  }
+</div>
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\toast\toast.component.ts -----
+import { Component, inject } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { ToastService, Toast } from '../../../core/services/toast.service';
+
+@Component({
+  selector: 'app-toast',
+  standalone: true,
+  imports: [CommonModule],
+  templateUrl: './toast.component.html',
+  styleUrls: ['./toast.component.css']
+})
+export class ToastComponent {
+  private toastService = inject(ToastService);
+  toasts = this.toastService.toast$;
+
+  getIcon(type: string): string {
+    const icons: { [key: string]: string } = {
+      success: 'âœ“',
+      error: 'âœ•',
+      info: 'â„¹',
+      warning: 'âš '
+    };
+    return icons[type] || 'â„¹';
+  }
+
+  close(id: string): void {
+    this.toastService.remove(id);
+  }
+}
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\topbar\topbar.component.css -----
+.topbar {
+  height: 64px;
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #4b5563;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.menu-btn:hover {
+  background: #f3f4f6;
+  color: #0066cc;
+}
+
+.app-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.user-section {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.user-section:hover {
+  background: #f3f4f6;
+}
+
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #e5e7eb;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.user-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.user-email {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.dropdown-icon {
+  color: #9ca3af;
+  transition: transform 0.2s ease;
+}
+
+.user-section:hover .dropdown-icon {
+  color: #4b5563;
+}
+
+.user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 280px;
+  z-index: 100;
+  overflow: hidden;
+}
+
+.user-menu-header {
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #f9fafb;
+}
+
+.user-menu-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid white;
+}
+
+.user-menu-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-menu-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-menu-email {
+  font-size: 13px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-menu-divider {
+  height: 1px;
+  background: #e5e7eb;
+}
+
+.user-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  text-align: left;
+}
+
+.user-menu-item:hover {
+  background: #f3f4f6;
+}
+
+.logout-item {
+  color: #dc2626;
+}
+
+.logout-item:hover {
+  background: #fee;
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+@media (max-width: 640px) {
+  .user-info {
+    display: none;
+  }
+
+  .user-menu {
+    right: -12px;
+  }
+
+  .app-title {
+    font-size: 18px;
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\topbar\topbar.component.html -----
+<header class="topbar">
+  <div class="topbar-left">
+    <button class="menu-btn" (click)="onToggleSidebar()">
+      <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+      </svg>
+    </button>
+    <h1 class="app-title">AVEVA Invoice</h1>
+  </div>
+
+  <div class="topbar-right">
+    <!-- Theme Toggle -->
+    <button class="theme-toggle" (click)="toggleTheme()" title="Toggle theme">
+      @if (theme() === 'light') {
+        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+        </svg>
+      } @else {
+        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+        </svg>
+      }
+    </button>
+
+    @if (user(); as currentUser) {
+      <div class="user-section" (click)="toggleUserMenu()">
+        <img 
+          [src]="currentUser.picture" 
+          [alt]="currentUser.name"
+          class="user-avatar">
+        <div class="user-info">
+          <span class="user-name">{{ currentUser.name }}</span>
+          <span class="user-email">{{ currentUser.email }}</span>
+        </div>
+        <svg class="dropdown-icon" width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+        </svg>
+
+        @if (showUserMenu) {
+          <div class="user-menu" (click)="$event.stopPropagation()">
+            <div class="user-menu-header">
+              <img 
+                [src]="currentUser.picture" 
+                [alt]="currentUser.name"
+                class="user-menu-avatar">
+              <div class="user-menu-info">
+                <div class="user-menu-name">{{ currentUser.name }}</div>
+                <div class="user-menu-email">{{ currentUser.email }}</div>
+              </div>
+            </div>
+            <div class="user-menu-divider"></div>
+            <button class="user-menu-item logout-item" (click)="logout()">
+              <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+              </svg>
+              Logout
+            </button>
+          </div>
+        }
+      </div>
+    }
+  </div>
+</header>
+
+@if (showUserMenu) {
+  <div class="backdrop" (click)="closeUserMenu()"></div>
+}
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\components\topbar\topbar.component.ts -----
+import { Component, EventEmitter, Output, inject } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { AuthService } from '../../../core/services/auth.service';
+import { ThemeService } from '../../../core/services/theme.service';
+
+@Component({
+  selector: 'app-topbar',
+  standalone: true,
+  imports: [CommonModule],
+  templateUrl: './topbar.component.html',
+  styleUrls: ['./topbar.component.css']
+})
+export class TopbarComponent {
+  @Output() toggleSidebar = new EventEmitter<void>();
+
+  private authService = inject(AuthService);
+  private themeService = inject(ThemeService);
+  
+  user = this.authService.user;
+  theme = this.themeService.theme;
+  showUserMenu = false;
+
+  onToggleSidebar(): void {
+    this.toggleSidebar.emit();
+  }
+
+  toggleTheme(): void {
+    this.themeService.toggleTheme();
+  }
+
+  toggleUserMenu(): void {
+    this.showUserMenu = !this.showUserMenu;
+  }
+
+  closeUserMenu(): void {
+    this.showUserMenu = false;
+  }
+
+  logout(): void {
+    this.closeUserMenu();
+    if (confirm('Are you sure you want to logout?')) {
+      this.authService.signOut();
+    }
+  }
+}
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\shared\directives\drag-drop.directive.ts -----
+import { Directive, EventEmitter, HostListener, Output, HostBinding } from '@angular/core';
+
+@Directive({
+  selector: '[appDragDrop]',
+  standalone: true
+})
+export class DragDropDirective {
+  @Output() filesDropped = new EventEmitter<FileList>();
+  @HostBinding('class.drag-over') isDragOver = false;
+
+  @HostListener('dragover', ['$event'])
+  onDragOver(event: DragEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.isDragOver = true;
+  }
+
+  @HostListener('dragleave', ['$event'])
+  onDragLeave(event: DragEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.isDragOver = false;
+  }
+
+  @HostListener('drop', ['$event'])
+  onDrop(event: DragEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.isDragOver = false;
+
+    const files = event.dataTransfer?.files;
+    if (files && files.length > 0) {
+      this.filesDropped.emit(files);
+    }
+  }
+}
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\app.component.ts -----
+import { Component } from '@angular/core';
+import { RouterOutlet } from '@angular/router';
+import { ToastComponent } from './shared/components/toast/toast.component';
+
+@Component({
+  selector: 'app-root',
+  standalone: true,
+  imports: [RouterOutlet, ToastComponent],
+  template: `
+    <router-outlet />
+    <app-toast />
+  `,
+  styles: []
+})
+export class AppComponent {
+  title = 'AVEVA Invoice';
+}
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\app.config.ts -----
+import { ApplicationConfig, provideZoneChangeDetection } from '@angular/core';
+import { provideRouter } from '@angular/router';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { routes } from './app.routes';
+import { authInterceptor } from './core/interceptors/auth.interceptor';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideZoneChangeDetection({ eventCoalescing: true }),
+    provideRouter(routes),
+    provideHttpClient(
+      withInterceptors([authInterceptor])
+    )
+  ]
+};
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\app\app.routes.ts -----
+import { Routes } from '@angular/router';
+import { authGuard } from './core/guards/auth.guard';
+
+export const routes: Routes = [
+  {
+    path: 'login',
+    loadComponent: () => import('./features/auth/login/login.component').then(m => m.LoginComponent)
+  },
+  {
+    path: '',
+    loadComponent: () => import('./shared/components/layout/layout.component').then(m => m.LayoutComponent),
+    canActivate: [authGuard],
+    children: [
+      {
+        path: '',
+        redirectTo: 'dashboard',
+        pathMatch: 'full'
+      },
+      {
+        path: 'dashboard',
+        loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent)
+      },
+      {
+        path: 'upload',
+        loadComponent: () => import('./features/upload/upload-invoice.component').then(m => m.UploadInvoiceComponent)
+      },
+      {
+        path: 'files',
+        loadComponent: () => import('./features/files/files.component').then(m => m.FilesComponent)
+      }
+    ]
+  },
+  {
+    path: '**',
+    redirectTo: 'dashboard'
+  }
+];
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\environments\client-secret.json -----
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\environments\client_secret_9948699749-6sqao0031k188duql8rcen8vrh8kg1o3.apps.googleusercontent.com.json -----
+{"web":{"client_id":"9948699749-6sqao0031k188duql8rcen8vrh8kg1o3.apps.googleusercontent.com","project_id":"my-invoice-app-485909","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":"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"}}
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\environments\environment.development.ts -----
+export const environment = {
+  production: false,
+  apiUrl: 'http://localhost:5247',
+  google: {
+    clientId: '9948699749-6sqao0031k188duql8rcen8vrh8kg1o3.apps.googleusercontent.com',
+    scopes: [
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/userinfo.email'
+    ],
+    discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'],
+    // Replace with your actual Google Drive Shared Folder ID
+    sharedFolderId: '1-PenAeLnXGUiZeNrmxJoVOX4yAf_sMCJ'
+  }
+};
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\environments\environment.ts -----
+export const environment = {
+  production: true,
+  apiUrl: 'https://localhost:7072',
+  google: {
+    clientId: '9948699749-6sqao0031k188duql8rcen8vrh8kg1o3.apps.googleusercontent.com',
+    scopes: [
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/userinfo.email'
+    ],
+    discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'],
+    // Replace with your actual Google Drive Shared Folder ID
+    sharedFolderId: '1-PenAeLnXGUiZeNrmxJoVOX4yAf_sMCJ'
+  }
+};
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\index.html -----
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AVEVA Invoice</title>
+  <base href="/">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  
+  <!-- Google API Client Library -->
+  <script src="https://apis.google.com/js/api.js"></script>
+</head>
+<body>
+  <app-root></app-root>
+</body>
+</html>
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\main.ts -----
+import { bootstrapApplication } from '@angular/platform-browser';
+import { appConfig } from './app/app.config';
+import { AppComponent } from './app/app.component';
+
+bootstrapApplication(AppComponent, appConfig)
+  .catch((err) => console.error(err));
+
+
+
+----- C:\Users\anagha.kini\OneDrive - AVEVA Solutions Limited\dev\aveva-invoice\src\styles.css -----
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Light theme colors */
+  --bg-primary: #f5f7fa;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f9fafb;
+  --bg-hover: #f3f4f6;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+  --border-color: #e5e7eb;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+  --accent-primary: #0066cc;
+  --accent-hover: #0052a3;
+  --success: #10b981;
+  --error: #ef4444;
+  --warning: #f59e0b;
+}
+
+:root [data-theme="dark"] {
+  /* Dark theme colors */
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-tertiary: #334155;
+  --bg-hover: #475569;
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-tertiary: #94a3b8;
+  --border-color: #334155;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+  --accent-primary: #3b82f6;
+  --accent-hover: #2563eb;
+  --success: #10b981;
+  --error: #ef4444;
+  --warning: #f59e0b;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--text-tertiary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* Loading spinner */
+.spinner {
+  border: 3px solid var(--bg-hover);
+  border-top: 3px solid var(--accent-primary);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Pulse animation */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Slide animations */
+@keyframes slideInFromRight {
+  0% { transform: translateX(100%); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideInFromLeft {
+  0% { transform: translateX(-100%); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideInFromTop {
+  0% { transform: translateY(-100%); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes fadeIn {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  0% { transform: scale(0.9); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Card styles */
+.card {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid var(--border-color);
+  animation: fadeIn 0.4s ease-out;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+/* Button styles */
+.btn {
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border: none;
+  font-size: 14px;
+  position: relative;
+  overflow: hidden;
+}
+
+.btn::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s, height 0.6s;
+}
+
+.btn:hover::before {
+  width: 300px;
+  height: 300px;
+}
+
+.btn:active {
+  transform: scale(0.95);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-hover) 100%);
+  color: white;
+  box-shadow: 0 4px 15px rgba(0, 102, 204, 0.3);
+}
+
+.btn-primary:hover {
+  box-shadow: 0 6px 20px rgba(0, 102, 204, 0.4);
+  transform: translateY(-2px);
+}
+
+.btn-secondary {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-hover);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn:disabled::before {
+  display: none;
+}
+
+/* Skeleton loader */
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-hover) 50%, var(--bg-tertiary) 75%);
+  background-size: 200% 100%;
+  animation: loading 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+@keyframes loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Toast notifications */
+.toast-container {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.toast {
+  min-width: 300px;
+  padding: 16px 20px;
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  animation: slideInFromRight 0.3s ease-out;
+  pointer-events: all;
+  backdrop-filter: blur(10px);
+}
+
+.toast-success {
+  background: rgba(16, 185, 129, 0.95);
+  color: white;
+}
+
+.toast-error {
+  background: rgba(239, 68, 68, 0.95);
+  color: white;
+}
+
+.toast-info {
+  background: rgba(59, 130, 246, 0.95);
+  color: white;
+}
+
+.toast-warning {
+  background: rgba(245, 158, 11, 0.95);
+  color: white;
+}
+
+/* Ripple effect */
+.ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.ripple::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s, height 0.6s;
+}
+
+.ripple:active::after {
+  width: 200px;
+  height: 200px;
+}
+
+/* Smooth transitions */
+.smooth-transition {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+

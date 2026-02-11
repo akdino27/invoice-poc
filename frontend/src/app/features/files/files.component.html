@@ -1,0 +1,125 @@
+<div class="animate-fade-in pb-12">
+  <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">File Manager</h1>
+      <p class="text-slate-500 dark:text-slate-400 mt-1 text-sm">Manage your uploaded documents</p>
+    </div>
+    <button 
+      (click)="refresh()"
+      [disabled]="isLoading"
+      class="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+      </svg>
+      Refresh
+    </button>
+  </div>
+
+  <!-- Search Bar -->
+  <div class="mb-6 bg-white dark:bg-dark-card rounded-lg border border-slate-200 dark:border-dark-border shadow-sm p-4">
+    <div class="relative">
+      <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+        <svg class="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+        </svg>
+      </div>
+      <input 
+        type="text" 
+        [(ngModel)]="searchTerm"
+        (input)="onSearch()"
+        class="block w-full pl-10 pr-3 py-2 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent sm:text-sm" 
+        placeholder="Search files...">
+      @if (searchTerm) {
+        <button 
+          (click)="clearSearch()"
+          class="absolute inset-y-0 right-0 pr-3 flex items-center">
+          <svg class="h-5 w-5 text-slate-400 hover:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      }
+    </div>
+  </div>
+  
+  @if (isLoading) {
+    <div class="flex items-center justify-center h-96">
+      <div class="loader"></div>
+    </div>
+  } @else if (filteredFiles.length === 0) {
+    <div class="bg-white dark:bg-dark-card rounded-lg border border-slate-200 dark:border-dark-border shadow-sm min-h-[400px] flex flex-col items-center justify-center p-8 text-center">
+      <div class="w-16 h-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
+        <svg class="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path>
+        </svg>
+      </div>
+      <h3 class="text-lg font-medium text-slate-900 dark:text-white mb-2">No files found</h3>
+      <p class="text-slate-500 dark:text-slate-400 max-w-sm">
+        @if (searchTerm) {
+          Try a different search term
+        } @else {
+          Upload your first invoice to get started
+        }
+      </p>
+    </div>
+  } @else {
+    <!-- Files Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      @for (file of filteredFiles; track file.id) {
+        <div class="group bg-white dark:bg-dark-card rounded-lg border border-slate-200 dark:border-dark-border shadow-sm hover:shadow-md transition-all p-4">
+          <div class="flex items-start justify-between mb-3">
+            <span class="text-3xl">{{ getFileIcon(file.mimeType) }}</span>
+            <div class="flex gap-1">
+              <button 
+                (click)="openInDrive(file)"
+                class="p-2 rounded-lg text-slate-400 hover:text-primary-600 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                title="Open in Drive">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                </svg>
+              </button>
+              <button 
+                (click)="downloadFile(file)"
+                class="p-2 rounded-lg text-slate-400 hover:text-primary-600 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                title="Download">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg>
+              </button>
+              <button 
+                (click)="deleteFile(file)"
+                class="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors"
+                title="Delete">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <h3 class="font-medium text-slate-900 dark:text-white text-sm mb-2 truncate" [title]="file.name">
+            {{ file.name }}
+          </h3>
+          <div class="space-y-1 text-xs text-slate-500 dark:text-slate-400">
+            <div class="flex items-center gap-1">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+              </svg>
+              <span>{{ formatDate(file.createdTime) }}</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+              </svg>
+              <span>{{ formatFileSize(file.size) }}</span>
+            </div>
+          </div>
+        </div>
+      }
+    </div>
+
+    <div class="mt-6 text-center">
+      <p class="text-sm text-slate-500 dark:text-slate-400">
+        Showing {{ filteredFiles.length }} file(s)
+      </p>
+    </div>
+  }
+</div>

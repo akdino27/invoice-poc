@@ -1,0 +1,61 @@
+<aside 
+  class="fixed left-0 top-0 bottom-0 z-50 flex flex-col bg-white dark:bg-dark-card border-r border-slate-200 dark:border-dark-border transition-all duration-300"
+  [class.w-64]="isOpen"
+  [class.w-16]="!isOpen"
+  [class.-translate-x-full]="!isOpen && isMobile"
+  [class.translate-x-0]="isOpen || !isMobile">
+  
+  <!-- Brand -->
+  <div class="h-16 flex items-center px-4 border-b border-slate-100 dark:border-slate-800/50">
+    <div class="flex items-center gap-3 text-primary-600 dark:text-primary-500 overflow-hidden">
+      <div class="shrink-0">
+        <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+        </svg>
+      </div>
+      @if (isOpen) {
+        <span class="font-bold text-lg tracking-tight text-slate-900 dark:text-white whitespace-nowrap opacity-100 transition-opacity duration-200">Invoice System</span>
+      }
+    </div>
+  </div>
+
+  <!-- Navigation -->
+  <nav class="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
+    @for (item of menuItems; track item.route) {
+      <a 
+        [routerLink]="item.route" 
+        routerLinkActive="bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400"
+        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group relative">
+        
+        <span class="shrink-0 transition-colors duration-200" 
+              routerLinkActive="text-primary-600 dark:text-primary-400" 
+              [innerHTML]="item.icon"></span>
+              
+        @if (isOpen) {
+          <span class="text-sm font-medium whitespace-nowrap">{{ item.label }}</span>
+        }
+        
+        <!-- Tooltip for collapsed state -->
+        @if (!isOpen && !isMobile) {
+          <div class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50">
+            {{ item.label }}
+          </div>
+        }
+      </a>
+    }
+  </nav>
+
+  <!-- User/Footer -->
+  <div class="p-3 border-t border-slate-100 dark:border-slate-800/50">
+    <button 
+      (click)="logout()"
+      class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-500 hover:text-red-600 hover:bg-red-50 dark:text-slate-400 dark:hover:bg-red-900/10 dark:hover:text-red-400 transition-colors group">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+      </svg>
+      @if (isOpen) {
+        <span class="text-sm font-medium">Logout</span>
+      }
+    </button>
+  </div>
+</aside>

@@ -1,0 +1,18 @@
+<div class="flex h-screen bg-slate-50 dark:bg-dark-bg text-slate-900 dark:text-slate-100 font-sans transition-colors duration-300 overflow-hidden">
+  <!-- Sidebar -->
+  <app-sidebar [isOpen]="isSidebarOpen" />
+  
+  <!-- Main Content -->
+  <div class="flex-1 flex flex-col min-w-0 transition-all duration-300 ease-in-out" 
+       [class.ml-64]="isSidebarOpen" 
+       [class.ml-16]="!isSidebarOpen">
+    
+    <app-topbar (toggleSidebar)="toggleSidebar()" />
+    
+    <main class="flex-1 overflow-x-hidden overflow-y-auto bg-slate-50 dark:bg-dark-bg p-6 md:p-8 scroll-smooth">
+      <div class="max-w-7xl mx-auto w-full">
+        <router-outlet />
+      </div>
+    </main>
+  </div>
+</div>
