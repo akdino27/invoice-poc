@@ -1,0 +1,33 @@
+<nav class="navbar">
+
+  <div class="left">
+    <span class="logo" routerLink="/">InvoiceAI</span>
+
+    <!-- Logged IN -->
+    @if (auth.isLoggedIn()) {
+      <a routerLink="/dashboard" routerLinkActive="active">Dashboard</a>
+      <a routerLink="/invoices" routerLinkActive="active">Invoices</a>
+      <a routerLink="/products" routerLinkActive="active">Products</a>
+      <a routerLink="/upload" routerLinkActive="active">Upload</a>
+      <a routerLink="/admin" routerLinkActive="active">Admin</a>
+    }
+
+    <!-- Logged OUT -->
+    @if (!auth.isLoggedIn()) {
+      <a routerLink="/login">Login</a>
+      <a routerLink="/signup">Signup</a>
+    }
+  </div>
+
+  <div class="right">
+    <mat-slide-toggle
+      (click)="toggleTheme()"
+      class="my-toggle">
+    </mat-slide-toggle>
+
+    @if (auth.isLoggedIn()) {
+      <button (click)="logout()">Logout</button>
+    }
+  </div>
+
+</nav>

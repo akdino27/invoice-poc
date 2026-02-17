@@ -1,0 +1,27 @@
+<section class="dashboard-page">
+  <h1 class="title">Dashboard</h1>
+  
+  <div class="panel">
+    <h2>Trending Products (Last 30 Days)</h2>
+    @if (loading()) {
+      <div class="spinner"></div>
+    } @else {
+      <div class="products-grid">
+        @for (product of trendingProducts(); track product.productId) {
+          <div class="stat-card">
+            <h3>{{ product.productName }}</h3>
+            <p class="stat-value">{{ formatCurrency(product.totalRevenue) }}</p>
+            <p class="stat-label">Revenue</p>
+            <div class="meta">
+              <span>Qty: {{ product.totalQuantity }}</span>
+              <span>Inv: {{ product.invoiceCount }}</span>
+            </div>
+          </div>
+        }
+        @if (trendingProducts().length === 0) {
+          <p>No trending data available.</p>
+        }
+      </div>
+    }
+  </div>
+</section>

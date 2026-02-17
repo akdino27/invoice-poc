@@ -1,0 +1,145 @@
+.hero {
+  min-height: calc(100vh - 64px); /* minus navbar */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 64px 24px;
+}
+
+.hero-content {
+  max-width: 800px;
+  text-align: center;
+}
+
+.headline {
+  font-size: 56px;
+  font-weight: 800;
+  line-height: 1.3;
+  margin-bottom: 32px;
+
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+
+.subtext {
+  font-size: 18px;
+  color: var(--text-muted);
+  margin-bottom: 40px;
+}
+
+.actions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+
+.btn {
+  position: relative;
+  padding: 14px 28px;
+  border-radius: 999px;
+  font-size: 16px;
+  cursor: pointer;
+  border: none;
+
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease,
+    background-position 0.4s ease;
+}
+
+
+.primary {
+  background: var(--gradient-primary);
+  background-size: 200% 200%;
+  color: #000;
+
+  box-shadow:
+    0 0 24px rgba(198, 43, 250, 0.877);
+}
+
+.primary:hover {
+  transform: translateY(-3px);
+  background-position: 100% 50%;
+
+  box-shadow:
+    0 0 48px var(--glow-purple),
+    0 3px 6px rgba(0, 0, 0, 0.4);
+}
+
+.primary:active {
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 24px var(--glow-purple);
+}
+
+
+.secondary {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  backdrop-filter: blur(10px);
+
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.secondary:hover {
+  transform: translateY(-2px);
+  background: var(--bg);
+
+  box-shadow:
+    0 0 16px rgba(255, 255, 255, 0.12),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+
+  background: linear-gradient(
+    120deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.35),
+    transparent 70%
+  );
+
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.primary:hover::after {
+  opacity: 0.4;
+}
+
+
+.hero {
+  position: relative;
+  overflow: hidden;
+}
+
+/* Glow orbs */
+.glow {
+  position: absolute;
+  width: 420px;
+  height: 420px;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.glow-1 {
+  top: -120px;
+  left: -120px;
+  background: var(--glow-purple);
+}
+
+.glow-2 {
+  bottom: -140px;
+  right: -140px;
+  background: var(--glow-purple);
+}

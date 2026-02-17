@@ -1,0 +1,33 @@
+# FastAPI and server
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+pydantic==2.6.1
+pydantic-settings==2.1.0
+
+# Database
+pyodbc==5.0.1
+
+# Google Drive
+google-api-python-client==2.116.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.0
+
+# OCR (Image Pipeline)
+pytesseract==0.3.10
+Pillow==10.2.0
+
+# PDF (PDF Pipeline)
+pdfplumber==0.11.0
+PyMuPDF==1.23.26
+
+# LLM
+groq==0.4.2
+
+# MIME Detection (CHANGED: python-magic for Linux)
+python-magic==0.4.27
+
+# HTTP Client
+httpx==0.26.0
+
+# Utilities
+python-json-logger==2.0.7

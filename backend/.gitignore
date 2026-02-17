@@ -1,0 +1,34 @@
+# Backend-specific secrets
+appsettings.json
+appsettings.Development.json
+service-account-key.json
+*.user
+
+# Build outputs
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+
+# Visual Studio
+.vs/
+*.rsuser
+
+# Logs
+logs/
+*.log
+
+# NuGet
+packages/
+*.nupkg
+
+# User-specific
+launchSettings.json
+
+invoice-486512-12a8a3e5d1f8.json
+
+# Google OAuth tokens
+Drive.Personal.Auth/
+
+Migrations/
+

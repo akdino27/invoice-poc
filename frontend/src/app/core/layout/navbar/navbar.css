@@ -1,0 +1,108 @@
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  padding: 14px 24px;
+
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(14px);
+
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.logo {
+  font-weight: 700;
+  font-size: 18px;
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.logo:hover{
+  cursor:pointer;
+}
+
+a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--text-primary);
+}
+
+/* ---------- THEME TOGGLE ---------- */
+
+.theme-toggle {
+  position: relative;
+  width: 56px;
+  height: 28px;
+
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+
+  background: var(--bg-elevated);
+  backdrop-filter: blur(10px);
+
+  box-shadow:
+    0 0 12px rgba(0, 0, 0, 0.25),
+    inset 0 0 6px rgba(255, 255, 255, 0.05);
+}
+
+.theme-toggle .icon {
+  position: absolute;
+  top: 6px;
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.my-toggle {
+  --mdc-switch-selected-track-color: rgb(50, 219, 166);
+  --mdc-switch-selected-handle-color: white;
+  --mdc-switch-unselected-track-color: #ccc;
+}
+
+/* Logout Button */
+button {
+  padding: 6px 14px;
+  margin-left: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 80, 80, 0.4);
+  background: transparent;
+  color: #ff5a5a;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+/* Hover */
+button:hover {
+  background: rgba(255, 80, 80, 0.1);
+  border-color: #ff5a5a;
+  transform: translateY(-1px);
+}
+
+/* Click press effect */
+button:active {
+  transform: translateY(0);
+  opacity: 0.8;
+}
+
+body.dark button {
+  border-color: rgba(255,120,120,0.6);
+  color: #ff8080;
+}
+
+a.active {
+  color: var(--glow-purple);
+  font-weight: 600;
+}
