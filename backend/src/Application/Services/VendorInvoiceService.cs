@@ -1,6 +1,7 @@
-﻿using invoice_v1.src.Application.DTOs;
+using invoice_v1.src.Application.DTOs;
 using invoice_v1.src.Application.Interfaces;
 using invoice_v1.src.Domain.Entities;
+using invoice_v1.src.Domain.Enums; 
 using invoice_v1.src.Infrastructure.Repositories;
 using invoice_v1.src.Services;
 using Microsoft.AspNetCore.Http;
@@ -37,6 +38,15 @@ namespace invoice_v1.src.Application.Services
             if (vendor == null || vendor.IsSoftDeleted)
             {
                 throw new InvalidOperationException("Vendor not found");
+            }
+
+            if (vendor.Role != UserRole.Vendor)
+            {
+                _logger.LogWarning(
+                    "User {UserId} with role {Role} attempted to upload invoice",
+                    vendorId,
+                    vendor.Role);
+                throw new UnauthorizedAccessException("Only vendors can upload invoices");
             }
 
             var allowedMimeTypes = new[]
