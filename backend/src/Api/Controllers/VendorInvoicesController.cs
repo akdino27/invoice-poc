@@ -1,11 +1,11 @@
-﻿using invoice_v1.src.Application.Interfaces;
+using invoice_v1.src.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 
 namespace invoice_v1.src.Api.Controllers
 {
-    [Authorize]
+    [Authorize(Roles = "Vendor")]
     [ApiController]
     [Route("api/[controller]")]
     public class VendorInvoicesController : ControllerBase
