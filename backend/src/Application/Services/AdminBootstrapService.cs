@@ -51,6 +51,7 @@ namespace invoice_v1.src.Application.Security
             {
                 Id = Guid.NewGuid(),
                 Email = email.Trim().ToLowerInvariant(),
+                Username = email.Trim().ToLowerInvariant().Split('@')[0],
                 PasswordHash = hash,
                 PasswordSalt = salt,
                 Role = UserRole.Admin,

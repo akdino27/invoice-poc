@@ -4,6 +4,7 @@ using invoice_v1.src.Application.Security;
 using invoice_v1.src.Domain.Entities;
 using invoice_v1.src.Domain.Enums;
 using invoice_v1.src.Infrastructure.Repositories;
+using Microsoft.Extensions.Options;
 
 namespace invoice_v1.src.Application.Services
 {
@@ -12,17 +13,20 @@ namespace invoice_v1.src.Application.Services
         private readonly IUserRepository _userRepository;
         private readonly IPasswordHasher _passwordHasher;
         private readonly IJwtTokenService _jwtTokenService;
+        private readonly JwtOptions _jwtOptions;
         private readonly ILogger<AuthService> _logger;
 
         public AuthService(
             IUserRepository userRepository,
             IPasswordHasher passwordHasher,
             IJwtTokenService jwtTokenService,
+            IOptions<JwtOptions> jwtOptions,
             ILogger<AuthService> logger)
         {
             _userRepository = userRepository;
             _passwordHasher = passwordHasher;
             _jwtTokenService = jwtTokenService;
+            _jwtOptions = jwtOptions.Value;
             _logger = logger;
         }
 
@@ -106,7 +110,7 @@ namespace invoice_v1.src.Application.Services
             await _userRepository.SaveChangesAsync();
 
             var token = _jwtTokenService.GenerateAccessToken(user);
-            var expiresAt = DateTime.UtcNow.AddHours(24);
+            var expiresAt = DateTime.UtcNow.AddMinutes(_jwtOptions.AccessTokenMinutes);
 
             _logger.LogInformation("User {Email} logged in successfully", user.Email);
 

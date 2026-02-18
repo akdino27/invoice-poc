@@ -7,7 +7,7 @@ using System.Text.Json;
 namespace invoice_v1.src.Api.Controllers
 {
     [ApiController]
-    [Route("api/ai/[controller]")]
+    [Route("api/[controller]")]
     public class CallbackController : ControllerBase
     {
         private readonly IJobService _jobService;
@@ -31,157 +31,103 @@ namespace invoice_v1.src.Api.Controllers
         [Consumes("application/json")]
         public async Task<IActionResult> HandleCallback()
         {
-            string requestBody;
-
             try
             {
+                // 1. Enable buffering so we can read the stream multiple times if needed
                 Request.EnableBuffering();
 
-                using var reader = new StreamReader(Request.Body, Encoding.UTF8, leaveOpen: true);
-                requestBody = await reader.ReadToEndAsync();
+                // 2. Read RAW bytes for HMAC validation
+                using var memoryStream = new MemoryStream();
+                await Request.Body.CopyToAsync(memoryStream);
+                var requestBytes = memoryStream.ToArray();
+                var requestBody = Encoding.UTF8.GetString(requestBytes);
+
+                // 3. Reset stream position for safety (though we have the string now)
                 Request.Body.Position = 0;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error reading request body");
-                return BadRequest(new { error = "Failed to read request body" });
-            }
 
-            if (!Request.Headers.TryGetValue("X-Callback-HMAC", out var hmacHeader))
-            {
-                return Unauthorized(new { error = "Missing X-Callback-HMAC header" });
-            }
-
-            if (!_hmacValidator.ValidateHmac(requestBody, hmacHeader!))
-            {
-                return Unauthorized(new { error = "Invalid HMAC signature" });
-            }
-
-            CallbackRequest? request;
-            try
-            {
-                request = JsonSerializer.Deserialize<CallbackRequest>(
-                    requestBody,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogError(ex, "Invalid JSON in callback request");
-                return BadRequest(new { error = "Invalid JSON format" });
-            }
-
-            if (request == null)
-            {
-                return BadRequest(new { error = "Invalid request payload" });
-            }
-
-            var job = await _jobService.GetJobByIdAsync(request.JobId);
-            if (job == null)
-            {
-                return NotFound(new { error = $"Job {request.JobId} not found" });
-            }
-
-            // FIX: Idempotency check - don't process if job already in final state
-            if (job.Status == "Completed" || job.Status == "Invalid")
-            {
-                _logger.LogWarning(
-                    "Callback received for job {JobId} already in final state {Status}, ignoring",
-                    request.JobId,
-                    job.Status);
-
-                return Ok(new
+                // 4. Validate HMAC
+                if (!Request.Headers.TryGetValue("X-Callback-HMAC", out var hmacHeader))
                 {
-                    success = true,
-                    jobId = request.JobId,
-                    status = job.Status,
-                    message = "Job already processed (idempotent)"
-                });
-            }
+                    return Unauthorized(new { error = "Missing X-Callback-HMAC header" });
+                }
 
-            try
-            {
+                if (!_hmacValidator.ValidateHmac(requestBody, hmacHeader!))
+                {
+                    _logger.LogWarning("HMAC validation failed for request.");
+                    return Unauthorized(new { error = "Invalid HMAC signature" });
+                }
+
+                // 5. Deserialize Request
+                CallbackRequest? request;
+                try
+                {
+                    request = JsonSerializer.Deserialize<CallbackRequest>(requestBody, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogError(ex, "Invalid JSON format in callback.");
+                    return BadRequest(new { error = "Invalid JSON format" });
+                }
+
+                if (request == null)
+                {
+                    return BadRequest(new { error = "Invalid request payload" });
+                }
+
+                // 6. Idempotency Check
+                var job = await _jobService.GetJobByIdAsync(request.JobId);
+                if (job == null)
+                {
+                    return NotFound(new { error = $"Job {request.JobId} not found" });
+                }
+
+                if (job.Status == "COMPLETED" || job.Status == "INVALID" || job.Status == "FAILED")
+                {
+                    _logger.LogInformation("Callback received for job {JobId} which is already {Status}. Ignoring.", request.JobId, job.Status);
+                    return Ok(new { success = true, jobId = request.JobId, message = "Job already processed (idempotent)" });
+                }
+
+                // 7. Process based on status
                 switch (request.Status.ToUpperInvariant())
                 {
                     case "COMPLETED":
-                        await HandleCompletedCallbackAsync(request);
+                        if (request.Result == null) throw new ArgumentException("Result is required for COMPLETED status");
+
+                        // Parse result safely
+                        var resultJson = JsonSerializer.Serialize(request.Result);
+                        var resultObj = JsonSerializer.Deserialize<JsonElement>(resultJson);
+
+                        await _invoiceService.CreateOrUpdateInvoiceFromCallbackAsync(request.JobId, resultObj);
+                        await _jobService.CompleteJobAsync(request.JobId);
+                        _logger.LogInformation("Job {JobId} completed successfully.", request.JobId);
                         break;
 
                     case "INVALID":
-                        await HandleInvalidCallbackAsync(request);
+                        var reasonJson = JsonSerializer.SerializeToDocument(new { message = request.Reason ?? "No reason provided" });
+                        await _jobService.MarkInvalidAsync(request.JobId, reasonJson);
+                        await _jobService.CreateInvalidInvoiceFromJobAsync(request.JobId, reasonJson);
                         break;
 
                     case "FAILED":
-                        await HandleFailedCallbackAsync(request);
+                        var errorJson = JsonSerializer.SerializeToDocument(new { message = request.Reason ?? "Worker reported failure" });
+                        await _jobService.MarkFailedAsync(request.JobId, errorJson);
+                        _logger.LogError("Job {JobId} marked as FAILED by worker.", request.JobId);
                         break;
 
                     default:
                         return BadRequest(new { error = $"Invalid status: {request.Status}" });
                 }
 
-                return Ok(new
-                {
-                    success = true,
-                    jobId = request.JobId,
-                    status = request.Status
-                });
+                return Ok(new { success = true, jobId = request.JobId, status = request.Status });
             }
             catch (Exception ex)
             {
-                _logger.LogError(
-                    ex,
-                    "Error processing callback for job {JobId} with status {Status}",
-                    request.JobId,
-                    request.Status);
-
-                return StatusCode(500, new { error = "Error processing callback" });
+                _logger.LogError(ex, "Error processing callback.");
+                return StatusCode(500, new { error = "Internal server error processing callback" });
             }
-        }
-
-        private async Task HandleCompletedCallbackAsync(CallbackRequest request)
-        {
-            if (request.Result == null)
-                throw new ArgumentException("Result is required for COMPLETED status");
-
-            var invoice = await _invoiceService.CreateOrUpdateInvoiceFromCallbackAsync(
-                request.JobId,
-                request.Result);
-
-            await _jobService.CompleteJobAsync(request.JobId);
-
-            _logger.LogInformation(
-                "Job {JobId} completed. Invoice {InvoiceId} processed",
-                request.JobId,
-                invoice.Id);
-        }
-
-        private async Task HandleInvalidCallbackAsync(CallbackRequest request)
-        {
-            var reasonJson = JsonDocument.Parse(
-                JsonSerializer.Serialize(new
-                {
-                    message = request.Reason ?? "No reason provided"
-                })
-            );
-
-            await _jobService.MarkInvalidAsync(request.JobId, reasonJson);
-
-            await _jobService.CreateInvalidInvoiceFromJobAsync(request.JobId, reasonJson);
-        }
-
-        private async Task HandleFailedCallbackAsync(CallbackRequest request)
-        {
-            var errorJson = JsonDocument.Parse(
-                JsonSerializer.Serialize(new
-                {
-                    message = request.Reason ?? "Worker reported failure"
-                })
-            );
-
-            await _jobService.MarkFailedAsync(request.JobId, errorJson);
-
-            _logger.LogError(
-                "Job {JobId} marked as FAILED",
-                request.JobId);
         }
     }
 }

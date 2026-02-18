@@ -48,7 +48,7 @@ class CallbackService:
         Raises:
             Exception: If callback fails or times out
         """
-        url = f"{self.backend_url}/api/ai/callback"
+        url = f"{self.backend_url}/api/callback"
         
         # Serialize callback data
         body = json.dumps(callback_data).encode('utf-8')
@@ -62,7 +62,7 @@ class CallbackService:
         }
         
         self.logger.info(f"Sending callback for job {callback_data['jobId']} to {url}")
-        self.logger.debug(f"🔐 HMAC signature: {hmac_signature[:20]}...")
+        self.logger.debug(f"HMAC signature: {hmac_signature[:20]}...")
         
         try:
             # Increase timeout to 180 seconds (3 minutes)
@@ -70,10 +70,10 @@ class CallbackService:
                 response = await client.post(url, headers=headers, content=body)
                 
                 if response.status_code == 200:
-                    self.logger.info(f"✅ Callback accepted for job {callback_data['jobId']}")
+                    self.logger.info(f"Callback accepted for job {callback_data['jobId']}")
                     return True
                 else:
-                    self.logger.error(f"❌ Callback failed: HTTP {response.status_code}")
+                    self.logger.error(f"Callback failed: HTTP {response.status_code}")
                     self.logger.error(f"Response: {response.text}")
                     raise Exception(f"Backend returned {response.status_code}")
         

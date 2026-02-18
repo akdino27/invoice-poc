@@ -2,7 +2,7 @@
 using invoice_v1.src.Domain.Entities;
 using System.Text.Json;
 
-namespace invoice_v1.src.Infrastructure.Services
+namespace invoice_v1.src.Application.Services
 {
     public class WorkerClient : IWorkerClient
     {

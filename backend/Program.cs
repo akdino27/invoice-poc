@@ -5,7 +5,6 @@ using invoice_v1.src.Application.Security;
 using invoice_v1.src.Application.Services;
 using invoice_v1.src.Infrastructure.Data;
 using invoice_v1.src.Infrastructure.Repositories;
-using invoice_v1.src.Infrastructure.Services;
 using invoice_v1.src.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -16,22 +15,18 @@ using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-
-// DATABASE CONFIGURATION
-
+// DATABASE
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(connectionString, npgsqlOptions =>
     {
-        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);
+        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), null);
         npgsqlOptions.CommandTimeout(30);
     }));
 
-
-// REDIS DISTRIBUTED CACHE
-
+// CACHE
 var redisConnection = builder.Configuration.GetConnectionString("Redis");
 if (!string.IsNullOrWhiteSpace(redisConnection))
 {
@@ -44,12 +39,9 @@ if (!string.IsNullOrWhiteSpace(redisConnection))
 else
 {
     builder.Services.AddDistributedMemoryCache();
-    Console.WriteLine("WARNING: Using in-memory cache. Configure Redis for production.");
 }
 
-
-// AUTHENTICATION & AUTHORIZATION
-
+// AUTH
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var jwtSecret = jwtSettings["Secret"] ?? throw new InvalidOperationException("JWT Secret not configured");
 
@@ -69,25 +61,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
             ClockSkew = TimeSpan.FromMinutes(5)
         };
-
-        options.Events = new JwtBearerEvents
-        {
-            OnAuthenticationFailed = context =>
-            {
-                if (context.Exception.GetType() == typeof(SecurityTokenExpiredException))
-                {
-                    context.Response.Headers.Append("Token-Expired", "true");
-                }
-                return Task.CompletedTask;
-            }
-        };
     });
 
 builder.Services.AddAuthorization();
 
-
-// DEPENDENCY INJECTION - REPOSITORIES (Scoped)
-
+// DEPENDENCY INJECTION
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
 builder.Services.AddScoped<IProductRepository, ProductRepository>();
@@ -95,9 +73,6 @@ builder.Services.AddScoped<IJobRepository, JobRepository>();
 builder.Services.AddScoped<IFileChangeLogRepository, FileChangeLogRepository>();
 builder.Services.AddScoped<IInvalidInvoiceRepository, InvalidInvoiceRepository>();
 builder.Services.AddScoped<IAnalyticsRepository, AnalyticsRepository>();
-
-
-// DEPENDENCY INJECTION - APPLICATION SERVICES (Scoped)
 
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IAdminUserService, AdminUserService>();
@@ -107,95 +82,59 @@ builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<IVendorInvoiceService, VendorInvoiceService>();
 builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
 builder.Services.AddScoped<IFileChangeLogService, FileChangeLogService>();
+builder.Services.AddScoped<IInvalidInvoiceService, InvalidInvoiceService>();
 builder.Services.AddScoped<IRateLimitService, RateLimitService>();
-
-
-// DEPENDENCY INJECTION - SECURITY (Singleton)
 
 builder.Services.AddSingleton<IPasswordHasher, PasswordHasher>();
 builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 builder.Services.AddSingleton<IHmacValidator, HmacValidator>();
-
-
-// DEPENDENCY INJECTION - EXTERNAL SERVICES
-
 builder.Services.AddSingleton<IGoogleDriveService, GoogleDriveService>();
 
-// FIX: Correct WorkerClient registration
-builder.Services.AddHttpClient(); // Register IHttpClientFactory
-builder.Services.AddScoped<IWorkerClient, WorkerClient>(); // Register WorkerClient normally
-
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<IWorkerClient, WorkerClient>();
 
 // BACKGROUND SERVICES
-
 builder.Services.AddHostedService<JobCreationService>();
 builder.Services.AddHostedService<JobRetryService>();
 builder.Services.AddHostedService<DriveMonitoringService>();
-
-
-// ADMIN BOOTSTRAP SERVICE
-
 builder.Services.AddScoped<AdminBootstrapService>();
 
-
-// CORS CONFIGURATION - Allow both localhost ports
-
+// CORS
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngular", policy =>
     {
-        policy.WithOrigins(
-                "http://localhost:4200",  // Angular dev server
-                "http://localhost:4201",  // Alternative port
-                "https://localhost:4200",
-                "https://localhost:4201"
-              )
+        policy.WithOrigins("http://localhost:4200", "https://localhost:4200")
               .AllowAnyHeader()
               .AllowAnyMethod()
-              .AllowCredentials()
-              .WithExposedHeaders("Token-Expired"); // Expose custom headers
+              .AllowCredentials();
     });
 });
 
-
-// CONTROLLERS & API CONFIGURATION - FIXED: camelCase JSON serialization
-
+// CONTROLLERS
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        // FIX: Use camelCase for JSON properties
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-        options.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.CamelCase;
-
-        // Additional options for better frontend compatibility
-        options.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-        options.JsonSerializerOptions.WriteIndented = builder.Environment.IsDevelopment();
-
-        // Handle circular references
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
     });
 
-
-// SWAGGER/OPENAPI
-
+// SWAGGER (FIXED - AUTOMATIC BEARER)
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new OpenApiInfo
-    {
-        Title = "Invoice Processing API",
-        Version = "v1",
-        Description = "API for automated invoice extraction and management"
-    });
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Invoice API", Version = "v1" });
 
+    // Use 'Http' scheme with 'bearer' format - No manual 'Bearer ' prefix needed
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token.",
+        Description = "Enter your JWT token in the text input below (Do NOT type 'Bearer').",
         Name = "Authorization",
         In = ParameterLocation.Header,
-        Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer"
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT"
     });
 
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -203,102 +142,54 @@ builder.Services.AddSwaggerGen(c =>
         {
             new OpenApiSecurityScheme
             {
-                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
             },
             Array.Empty<string>()
         }
     });
 });
 
-
-// LOGGING
-
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
-builder.Logging.AddDebug();
-
-if (builder.Environment.IsProduction())
-{
-    builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
-}
-else
-{
-    // More verbose logging in development
-    builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Information);
-}
 
 var app = builder.Build();
 
-
-// DATABASE MIGRATION & ADMIN BOOTSTRAP
-
+// MIGRATION
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
-    var logger = services.GetRequiredService<ILogger<Program>>();
-
     try
     {
         var context = services.GetRequiredService<ApplicationDbContext>();
-        await context.Database.MigrateAsync();
-        logger.LogInformation(" Database migration completed");
-
-        var bootstrapService = services.GetRequiredService<AdminBootstrapService>();
-        await bootstrapService.EnsureAdminExistsAsync();
-        logger.LogInformation(" Admin bootstrap completed");
+        if (context.Database.GetPendingMigrations().Any())
+        {
+            await context.Database.MigrateAsync();
+        }
+        await services.GetRequiredService<AdminBootstrapService>().EnsureAdminExistsAsync();
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "❌ Error during startup initialization");
-        throw;
+        var logger = services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "An error occurred during migration.");
     }
 }
 
-
-// MIDDLEWARE PIPELINE
-
+// MIDDLEWARE
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Invoice API v1");
-        c.RoutePrefix = string.Empty;
-    });
-
-    // Log startup info
-    var logger = app.Services.GetRequiredService<ILogger<Program>>();
-    logger.LogInformation("🚀 Swagger UI available at: https://localhost:{Port}",
-        builder.Configuration["Kestrel:Endpoints:Https:Url"] ?? "5247");
+    app.UseSwaggerUI();
 }
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
-
-// Security headers
-app.Use(async (context, next) =>
-{
-    context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
-    context.Response.Headers.Append("X-Frame-Options", "DENY");
-    context.Response.Headers.Append("X-XSS-Protection", "1; mode=block");
-    context.Response.Headers.Append("Referrer-Policy", "strict-origin-when-cross-origin");
-    await next();
-});
-
 app.UseHttpsRedirection();
-
-// CORS - Must be before Authentication/Authorization
 app.UseCors("AllowAngular");
-
 app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
-
-// Log registered routes in development
-if (app.Environment.IsDevelopment())
-{
-    var logger = app.Services.GetRequiredService<ILogger<Program>>();
-    logger.LogInformation(" Application started successfully");
-}
 
 app.Run();

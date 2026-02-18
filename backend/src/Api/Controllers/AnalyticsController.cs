@@ -3,14 +3,13 @@ using invoice_v1.src.Application.Interfaces;
 using invoice_v1.src.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace invoice_v1.src.Api.Controllers
 {
     [Authorize]
     [ApiController]
     [Route("api/analytics")]  // FIXED: Lowercase route
-    public class AnalyticsController : ControllerBase
+    public class AnalyticsController : BaseAuthenticatedController
     {
         private readonly IAnalyticsService _analyticsService;
         private readonly ILogger<AnalyticsController> _logger;
@@ -148,24 +147,6 @@ namespace invoice_v1.src.Api.Controllers
                 vendorId);
 
             return Ok(results);
-        }
-
-        private Guid? GetVendorIdIfVendor()
-        {
-            var userRole = User.FindFirstValue(ClaimTypes.Role);
-
-            if (userRole == UserRole.Vendor.ToString())
-            {
-                var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-                if (Guid.TryParse(userIdClaim, out var vendorId))
-                {
-                    _logger.LogDebug("Analytics request from vendor {VendorId}", vendorId);
-                    return vendorId;
-                }
-            }
-
-            _logger.LogDebug("Analytics request from admin - no vendor filter");
-            return null;
         }
     }
 }

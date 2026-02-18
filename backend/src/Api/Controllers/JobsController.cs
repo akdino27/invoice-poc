@@ -3,14 +3,13 @@ using invoice_v1.src.Application.Interfaces;
 using invoice_v1.src.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace invoice_v1.src.Api.Controllers
 {
     [Authorize(Roles = "Admin,Vendor")]
     [ApiController]
     [Route("api/[controller]")]
-    public class JobsController : ControllerBase
+    public class JobsController : BaseAuthenticatedController
     {
         private readonly IJobService _jobService;
         private readonly IConfiguration _configuration;
@@ -104,7 +103,7 @@ namespace invoice_v1.src.Api.Controllers
                 _logger.LogInformation(
                     "Job {JobId} requeued by admin {AdminId}",
                     id,
-                    User.FindFirstValue(ClaimTypes.NameIdentifier));
+                    GetCurrentUserId());
 
                 return Ok(new
                 {
@@ -122,23 +121,6 @@ namespace invoice_v1.src.Api.Controllers
                 _logger.LogError(ex, "Error requeuing job {JobId}", id);
                 return StatusCode(500, new { error = "Internal server error" });
             }
-        }
-
-        private Guid? GetVendorIdIfVendor()
-        {
-            var userRole = User.FindFirstValue(ClaimTypes.Role);
-
-            if (userRole == UserRole.Vendor.ToString())
-            {
-                var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-                if (Guid.TryParse(userIdClaim, out var vendorId))
-                {
-                    _logger.LogDebug("Jobs request from vendor {VendorId}", vendorId);
-                    return vendorId;
-                }
-            }
-
-            return null;
         }
     }
 }

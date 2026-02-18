@@ -1,16 +1,9 @@
-﻿using Microsoft.Extensions.Caching.Distributed;
+﻿using invoice_v1.src.Application.Interfaces;
+using Microsoft.Extensions.Caching.Distributed;
 using System.Text.Json;
 
 namespace invoice_v1.src.Application.Services
 {
-    public interface IRateLimitService
-    {
-        Task<bool> IsRateLimitedAsync(string key, int maxAttempts, TimeSpan window);
-        Task IncrementAsync(string key, TimeSpan window);
-        Task ResetAsync(string key);
-        Task<int> GetAttemptsAsync(string key);
-    }
-
     public class RateLimitService : IRateLimitService
     {
         private readonly IDistributedCache _cache;
