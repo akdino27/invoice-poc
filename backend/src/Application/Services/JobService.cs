@@ -13,7 +13,6 @@ namespace invoice_v1.src.Application.Services
     {
         private readonly IJobRepository _jobQueueRepository;
         private readonly IInvalidInvoiceRepository _invalidInvoiceRepository;
-        private readonly IWorkerClient _workerClient;
         private readonly ILogger<JobService> _logger;
 
         // CONFIGURATION: Max retries allowed before marking as INVALID
@@ -22,12 +21,10 @@ namespace invoice_v1.src.Application.Services
         public JobService(
             IJobRepository jobQueueRepository,
             IInvalidInvoiceRepository invalidInvoiceRepository,
-            IWorkerClient workerClient,
             ILogger<JobService> logger)
         {
             _jobQueueRepository = jobQueueRepository;
             _invalidInvoiceRepository = invalidInvoiceRepository;
-            _workerClient = workerClient;
             _logger = logger;
         }
 
@@ -66,7 +63,7 @@ namespace invoice_v1.src.Application.Services
             var payload = job.PayloadJson?.RootElement;
             if (payload == null) return false;
 
-            if (payload.Value.TryGetProperty("driveVendorId", out var vendorIdProp))
+            if (payload.Value.TryGetProperty("uploader", out var vendorIdProp))
             {
                 var jobVendorIdStr = vendorIdProp.GetString();
                 if (Guid.TryParse(jobVendorIdStr, out var jobVendorId))
@@ -98,9 +95,9 @@ namespace invoice_v1.src.Application.Services
                 fileId = log.FileId,
                 originalName = log.FileName,
                 mimeType = log.MimeType ?? "application/octet-stream",
-                changeType = log.ChangeType,
-                driveVendorId = log.UploadedByVendorId?.ToString(),
                 fileSize = log.FileSize ?? 0,
+                uploader = log.UploadedByVendorId?.ToString(),
+                schemaVersion = "1.0",
                 idempotencyKey = $"{log.FileId}_{log.DetectedAt:yyyyMMddHHmmss}",
                 detectedAt = log.DetectedAt.ToString("o")
             };
@@ -121,16 +118,8 @@ namespace invoice_v1.src.Application.Services
 
             _logger.LogInformation("Created job {JobId} for file {FileId} {FileName}", job.Id, log.FileId, log.FileName);
 
-            try
-            {
-                await _workerClient.SendCallbackAsync(job.Id, nameof(JobStatus.PENDING), job.PayloadJson);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to send job {JobId} to worker, triggering retry logic", job.Id);
-                var error = JsonDocument.Parse(JsonSerializer.Serialize(new { message = "Initial dispatch failed: " + ex.Message }));
-                await MarkFailedAsync(job.Id, error);
-            }
+            // Worker will pick up the PENDING job via its polling loop —
+            // no push notification needed.
         }
 
         public async Task CompleteJobAsync(Guid jobId)
@@ -229,7 +218,7 @@ namespace invoice_v1.src.Application.Services
             if (payload.Value.TryGetProperty("originalName", out var fnameProp)) fileName = fnameProp.GetString();
 
             Guid? vendorId = null;
-            if (payload.Value.TryGetProperty("driveVendorId", out var vidProp) && Guid.TryParse(vidProp.GetString(), out var vid))
+            if (payload.Value.TryGetProperty("uploader", out var vidProp) && Guid.TryParse(vidProp.GetString(), out var vid))
             {
                 vendorId = vid;
             }
@@ -291,24 +280,15 @@ namespace invoice_v1.src.Application.Services
 
         public async Task ProcessPendingJobAsync(JobQueue job)
         {
-            try
-            {
-                _logger.LogInformation("Dispatching retry for job {JobId} (Attempt {RetryCount})", job.Id, job.RetryCount);
+            // Clear NextRetryAt so the worker's poll query picks this job up
+            // (worker claims where NextRetryAt IS NULL OR <= NOW)
+            job.NextRetryAt = null;
+            await _jobQueueRepository.UpdateAsync(job);
+            await _jobQueueRepository.SaveChangesAsync();
 
-                await _workerClient.SendCallbackAsync(job.Id, nameof(JobStatus.PENDING), job.PayloadJson);
-
-                job.NextRetryAt = null;
-                await _jobQueueRepository.UpdateAsync(job);
-                await _jobQueueRepository.SaveChangesAsync();
-
-                _logger.LogInformation("Retried job {JobId} dispatched to worker", job.Id);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Retry dispatch failed for job {JobId}", job.Id);
-                var error = JsonDocument.Parse(JsonSerializer.Serialize(new { error = "Retry dispatch failed: " + ex.Message }));
-                await MarkFailedAsync(job.Id, error);
-            }
+            _logger.LogInformation(
+                "Job {JobId} (attempt {RetryCount}) is PENDING — worker will pick it up on next poll",
+                job.Id, job.RetryCount);
         }
 
         private static JobDto MapToDto(JobQueue job)

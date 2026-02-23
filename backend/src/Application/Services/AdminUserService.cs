@@ -123,7 +123,7 @@ namespace invoice_v1.src.Application.Services
                 throw new InvalidOperationException("User is already deleted");
             }
 
-            user.IsSoftDeleted = true;  
+            user.IsSoftDeleted = true;
             user.UpdatedAt = DateTime.UtcNow;
 
             await _userRepository.UpdateAsync(user);
@@ -144,12 +144,12 @@ namespace invoice_v1.src.Application.Services
                 throw new InvalidOperationException($"User {userId} not found");
             }
 
-            if (user.Status != UserStatus.Locked) 
+            if (user.Status != UserStatus.Locked)
             {
                 throw new InvalidOperationException("User is not locked");
             }
 
-            user.Status = UserStatus.Approved; 
+            user.Status = UserStatus.Approved;
             user.FailedLoginCount = 0;  // Reset failed login count
             user.UpdatedAt = DateTime.UtcNow;
 

@@ -1,11 +1,13 @@
-﻿using invoice_v1.src.Application.Interfaces;
+﻿using invoice_v1.src.Application.DTOs;
+using invoice_v1.src.Application.Exceptions;
+using invoice_v1.src.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 
 namespace invoice_v1.src.Api.Controllers
 {
-    [Authorize]
+    [Authorize(Roles = "Vendor")]
     [ApiController]
     [Route("api/[controller]")]
     public class VendorInvoicesController : ControllerBase
@@ -21,12 +23,14 @@ namespace invoice_v1.src.Api.Controllers
             _logger = logger;
         }
 
-        [ApiExplorerSettings(IgnoreApi = true)]
         [HttpPost("upload")]
         [Consumes("multipart/form-data")]
-        public async Task<IActionResult> UploadInvoice([FromForm] IFormFile file)
+        [ProducesResponseType(typeof(UploadResult), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> UploadInvoice([FromForm] UploadInvoiceRequest request)
         {
-            if (file == null || file.Length == 0)
+            if (request.File == null || request.File.Length == 0)
             {
                 return BadRequest(new { Message = "No file uploaded" });
             }
@@ -34,8 +38,20 @@ namespace invoice_v1.src.Api.Controllers
             try
             {
                 var vendorId = GetVendorIdAsGuid();
-                var result = await _vendorInvoiceService.UploadInvoiceAsync(vendorId, file);
+                var result = await _vendorInvoiceService.UploadInvoiceAsync(vendorId, request.File);
+
+                if (!result.Success)
+                {
+                    return UnprocessableEntity(new { result.Message, result.SecurityReason });
+                }
+
                 return Ok(result);
+            }
+            catch (RateLimitExceededException ex)
+            {
+                _logger.LogWarning(ex, "Rate limit exceeded for upload");
+                return StatusCode(StatusCodes.Status429TooManyRequests,
+                    new { Message = ex.Message });
             }
             catch (ArgumentException ex)
             {
@@ -67,5 +83,16 @@ namespace invoice_v1.src.Api.Controllers
 
             return vendorId;
         }
+    }
+
+    /// <summary>
+    /// Request model for file upload — wraps IFormFile so Swashbuckle can generate a proper schema.
+    /// </summary>
+    public class UploadInvoiceRequest
+    {
+        /// <summary>
+        /// The invoice file to upload (PDF, JPEG, or PNG).
+        /// </summary>
+        public IFormFile File { get; set; } = null!;
     }
 }

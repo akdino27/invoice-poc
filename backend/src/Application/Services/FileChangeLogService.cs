@@ -50,7 +50,10 @@ namespace invoice_v1.src.Application.Services
                     l.GoogleDriveModifiedTime,
                     l.Processed,
                     l.ProcessedAt,
-                    l.UploadedByVendorId
+                    l.UploadedByVendorId,
+                    l.SecurityStatus,
+                    l.SecurityFailReason,
+                    l.SecurityCheckedAt
                 }),
                 page,
                 pageSize,
@@ -92,7 +95,10 @@ namespace invoice_v1.src.Application.Services
                 log.GoogleDriveModifiedTime,
                 log.Processed,
                 log.ProcessedAt,
-                log.UploadedByVendorId
+                log.UploadedByVendorId,
+                log.SecurityStatus,
+                log.SecurityFailReason,
+                log.SecurityCheckedAt
             };
         }
 

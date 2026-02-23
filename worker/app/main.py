@@ -9,12 +9,16 @@ from typing import Dict
 from app.config import load_config
 from app.worker import InvoiceWorker
 from app.utils.hmac import compute_hmac
+from app.utils.file_logger import setup_file_logging
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# Initialize file-based logging (logs/logs_worker/success|warn|fail/)
+setup_file_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -26,27 +30,27 @@ worker: InvoiceWorker = None
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
     global worker
-    
+
     # Startup: Initialize and start worker in background thread
     try:
         config = load_config()
         worker = InvoiceWorker(config)
-        
+
         # Run worker in separate thread
         worker_thread = threading.Thread(
             target=lambda: asyncio.run(worker.start()),
             daemon=True
         )
         worker_thread.start()
-        
+
         logger.info("FastAPI app started with background worker")
-        
+
         yield
-        
+
     finally:
         # Shutdown: Stop worker gracefully
         if worker:
-            worker.running = False
+            worker.is_running = False
         logger.info("FastAPI app stopped")
 
 
@@ -74,14 +78,14 @@ def health():
     """Health check endpoint for monitoring."""
     if not worker:
         raise HTTPException(status_code=503, detail="Worker not initialized")
-    
+
     uptime = (datetime.now(timezone.utc) - worker.stats["start_time"]).total_seconds()
-    
+
     return {
         "status": "healthy",
         "worker_id": worker.config.worker_id,
         "uptime_seconds": round(uptime, 2),
-        "is_running": worker.running
+        "is_running": worker.is_running
     }
 
 
@@ -90,19 +94,19 @@ def metrics():
     """Worker metrics and statistics."""
     if not worker:
         raise HTTPException(status_code=503, detail="Worker not initialized")
-    
+
     uptime = (datetime.now(timezone.utc) - worker.stats["start_time"]).total_seconds()
     total_jobs = (
-        worker.stats["jobs_processed"] + 
-        worker.stats["jobs_failed"] + 
+        worker.stats["jobs_processed"] +
+        worker.stats["jobs_failed"] +
         worker.stats["jobs_invalid"]
     )
-    
+
     success_rate = (
-        worker.stats["jobs_processed"] / total_jobs 
+        worker.stats["jobs_processed"] / total_jobs
         if total_jobs > 0 else 0
     )
-    
+
     return {
         "jobs_completed": worker.stats["jobs_processed"],
         "jobs_failed": worker.stats["jobs_failed"],
@@ -121,11 +125,11 @@ async def test_callback(payload: Dict):
     """
     if not worker:
         raise HTTPException(status_code=503, detail="Worker not initialized")
-    
+
     hmac_sig = compute_hmac(payload, worker.config.callback_secret)
-    
+
     return {
         "payload": payload,
         "hmac": hmac_sig,
-        "callback_url": f"{worker.config.backend_url}/api/ai/callback"
+        "callback_url": f"{worker.config.backend_url}/api/callback"
     }

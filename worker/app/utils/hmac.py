@@ -15,14 +15,14 @@ def compute_hmac(payload: Dict, secret: str) -> str:
     """
     # Serialize with NO whitespace - CRITICAL for signature matching
     json_str = json.dumps(payload, separators=(',', ':'), sort_keys=True)
-    
+
     # Compute HMAC-SHA256
     signature = hmac.new(
         secret.encode('utf-8'),
         json_str.encode('utf-8'),
         hashlib.sha256
     ).hexdigest().lower()
-    
+
     return signature
 
 

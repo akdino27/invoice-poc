@@ -45,11 +45,11 @@ namespace invoice_v1.src.Application.BackgroundServices
             var fileChangeLogRepository = scope.ServiceProvider.GetRequiredService<IFileChangeLogRepository>();
             var jobService = scope.ServiceProvider.GetRequiredService<IJobService>();
 
-            // 1. Get unprocessed logs
-            var unprocessedLogs = await fileChangeLogRepository.GetUnprocessedLogsAsync(50);
+            // 1. Get unprocessed HEALTHY logs only (FileId is already set to real Drive ID)
+            var unprocessedLogs = await fileChangeLogRepository.GetUnprocessedHealthyLogsAsync(50);
             if (unprocessedLogs.Count == 0) return;
 
-            _logger.LogInformation("Found {Count} unprocessed file logs.", unprocessedLogs.Count);
+            _logger.LogInformation("Found {Count} unprocessed healthy file logs.", unprocessedLogs.Count);
 
             foreach (var log in unprocessedLogs)
             {
@@ -70,7 +70,6 @@ namespace invoice_v1.src.Application.BackgroundServices
 
                         await transaction.CommitAsync(cancellationToken);
                         _logger.LogInformation("Created job for file {FileId}.", log.FileId);
-
                     }
                     catch (Exception ex)
                     {

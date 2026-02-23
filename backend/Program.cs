@@ -12,6 +12,8 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
 using System.Text.Json;
+using Serilog;
+using Serilog.Events;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -91,7 +93,18 @@ builder.Services.AddSingleton<IHmacValidator, HmacValidator>();
 builder.Services.AddSingleton<IGoogleDriveService, GoogleDriveService>();
 
 builder.Services.AddHttpClient();
-builder.Services.AddScoped<IWorkerClient, WorkerClient>();
+
+// SECURITY PIPELINE
+builder.Services.AddSingleton<FileTypeValidator>();
+builder.Services.AddSingleton<MagicBytesValidator>();
+builder.Services.AddScoped<TokenCountValidator>();
+builder.Services.AddScoped<IFileSecurityPipeline, FileSecurityPipeline>();
+builder.Services.AddHttpClient<VirusTotalScanner>(client =>
+{
+    client.BaseAddress = new Uri("https://www.virustotal.com");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
 
 // BACKGROUND SERVICES
 builder.Services.AddHostedService<JobCreationService>();
@@ -126,6 +139,11 @@ builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "Invoice API", Version = "v1" });
 
+    // Fix: JsonDocument/JsonElement cannot be described by Swashbuckle.
+    // Map them to a freeform object schema so swagger.json generates correctly.
+    c.MapType<System.Text.Json.JsonDocument>(() => new OpenApiSchema { Type = "object", AdditionalPropertiesAllowed = true });
+    c.MapType<System.Text.Json.JsonElement>(() => new OpenApiSchema { Type = "object", AdditionalPropertiesAllowed = true });
+
     // Use 'Http' scheme with 'bearer' format - No manual 'Bearer ' prefix needed
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -153,8 +171,37 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
+// LOGGING - Serilog with status-based file sinks
+builder.Host.UseSerilog((context, config) =>
+{
+    config
+        .MinimumLevel.Debug()
+        .MinimumLevel.Override("Microsoft", LogEventLevel.Information)
+        .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+        // Console output
+        .WriteTo.Console()
+        // Success logs (Info and below)
+        .WriteTo.Logger(lc => lc
+            .Filter.ByIncludingOnly(e => e.Level <= LogEventLevel.Information)
+            .WriteTo.File(
+                path: Path.Combine("logs", "logs_backend", "success", "log-.txt"),
+                rollingInterval: RollingInterval.Day,
+                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} | {SourceContext} | {Level:u3} | {Message:lj}{NewLine}{Exception}"))
+        // Warn logs (Warning only)
+        .WriteTo.Logger(lc => lc
+            .Filter.ByIncludingOnly(e => e.Level == LogEventLevel.Warning)
+            .WriteTo.File(
+                path: Path.Combine("logs", "logs_backend", "warn", "log-.txt"),
+                rollingInterval: RollingInterval.Day,
+                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} | {SourceContext} | {Level:u3} | {Message:lj}{NewLine}{Exception}"))
+        // Fail logs (Error and Fatal)
+        .WriteTo.Logger(lc => lc
+            .Filter.ByIncludingOnly(e => e.Level >= LogEventLevel.Error)
+            .WriteTo.File(
+                path: Path.Combine("logs", "logs_backend", "fail", "log-.txt"),
+                rollingInterval: RollingInterval.Day,
+                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} | {SourceContext} | {Level:u3} | {Message:lj}{NewLine}{Exception}"));
+});
 
 var app = builder.Build();
 

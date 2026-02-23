@@ -43,18 +43,18 @@ def validate_mime_type(detected: str, expected: str) -> bool:
         'image/jpeg': ['image/jpeg', 'image/jpg'],
         'image/png': ['image/png'],
     }
-    
+
     # Check if both are in same alias group
     for canonical, aliases in mime_aliases.items():
         if expected in aliases and detected in aliases:
             logger.debug(f"MIME types match: {detected} == {expected}")
             return True
-    
+
     # Direct match
     matches = detected == expected
     if not matches:
         logger.warning(f"MIME type mismatch: detected={detected}, expected={expected}")
-    
+
     return matches
 
 

@@ -9,7 +9,7 @@ namespace invoice_v1.src.Domain.Entities
         [Key]
         public Guid Id { get; set; } = Guid.NewGuid();
 
-        public Guid JobId { get; set; } // Link to source Job
+        public Guid? JobId { get; set; } // nullable: security-rejected files have no JobId
 
         [MaxLength(200)]
         public string FileId { get; set; } = string.Empty;

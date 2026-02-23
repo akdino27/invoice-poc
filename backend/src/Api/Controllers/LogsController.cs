@@ -9,11 +9,11 @@ namespace invoice_v1.src.Api.Controllers
     [Route("api/[controller]")]
     public class LogsController : BaseAuthenticatedController
     {
-        private readonly IFileChangeLogService _fileChangeLogService; 
+        private readonly IFileChangeLogService _fileChangeLogService;
         private readonly ILogger<LogsController> _logger;
 
         public LogsController(
-            IFileChangeLogService fileChangeLogService, 
+            IFileChangeLogService fileChangeLogService,
             ILogger<LogsController> logger)
         {
             _fileChangeLogService = fileChangeLogService;

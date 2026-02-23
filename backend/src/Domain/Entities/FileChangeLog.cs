@@ -14,5 +14,10 @@
         public bool Processed { get; set; } = false;
         public DateTime? ProcessedAt { get; set; }
         public Guid? UploadedByVendorId { get; set; }
+
+        // Security pipeline fields
+        public string SecurityStatus { get; set; } = "Pending";
+        public string? SecurityFailReason { get; set; }
+        public DateTime? SecurityCheckedAt { get; set; }
     }
 }

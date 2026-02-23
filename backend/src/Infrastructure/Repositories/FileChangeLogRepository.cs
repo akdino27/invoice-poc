@@ -1,4 +1,5 @@
 ﻿using invoice_v1.src.Domain.Entities;
+using invoice_v1.src.Domain.Enums;
 using invoice_v1.src.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -100,6 +101,41 @@ namespace invoice_v1.src.Infrastructure.Repositories
                 .OrderBy(log => log.DetectedAt)
                 .Take(limit)
                 .ToListAsync();
+        }
+
+        public async Task<List<FileChangeLog>> GetUnprocessedHealthyLogsAsync(int limit)
+        {
+            return await _context.FileChangeLogs
+                .Where(l =>
+                    !l.Processed &&
+                    l.SecurityStatus == nameof(FileSecurityStatus.Healthy) &&
+                    l.FileId != null &&
+                    (l.ChangeType == "Upload" || l.ChangeType == "Modified"))
+                .OrderBy(l => l.DetectedAt)
+                .Take(limit)
+                .ToListAsync();
+        }
+
+        public async Task<(List<FileChangeLog> Data, int Total)> GetUnhealthyLogsAsync(int page, int pageSize, Guid? vendorId)
+        {
+            var query = _context.FileChangeLogs
+                .Where(l => l.SecurityStatus == nameof(FileSecurityStatus.Unhealthy));
+
+            if (vendorId.HasValue)
+            {
+                query = query.Where(l => l.UploadedByVendorId == vendorId.Value);
+            }
+
+            var total = await query.CountAsync();
+
+            var data = await query
+                .OrderByDescending(l => l.DetectedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .AsNoTracking()
+                .ToListAsync();
+
+            return (data, total);
         }
 
         public async Task<FileChangeLog> CreateAsync(FileChangeLog log)

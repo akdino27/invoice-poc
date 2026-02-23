@@ -144,6 +144,17 @@ namespace invoice_v1.src.Infrastructure.Data
 
                 entity.Property(e => e.UploadedByVendorId);
 
+                entity.Property(e => e.SecurityStatus)
+                      .HasMaxLength(20)
+                      .HasDefaultValue("Pending")
+                      .IsRequired();
+
+                entity.Property(e => e.SecurityFailReason)
+                      .HasMaxLength(500);
+
+                entity.Property(e => e.SecurityCheckedAt)
+                      .HasColumnType("timestamptz");
+
                 entity.HasIndex(e => new { e.Processed, e.DetectedAt })
                       .HasDatabaseName("ix_file_change_logs_processed_detected_at");
 
@@ -158,6 +169,9 @@ namespace invoice_v1.src.Infrastructure.Data
 
                 entity.HasIndex(e => e.Processed)
                       .HasDatabaseName("ix_file_change_logs_processed");
+
+                entity.HasIndex(e => e.SecurityStatus)
+                      .HasDatabaseName("ix_file_change_logs_security_status");
             });
         }
 
@@ -496,6 +510,12 @@ namespace invoice_v1.src.Infrastructure.Data
 
                 entity.HasIndex(e => e.CreatedAt)
                       .HasDatabaseName("ix_invalid_invoices_created_at");
+
+                entity.HasIndex(e => e.VendorId)
+                      .HasDatabaseName("ix_invalid_invoices_vendor_id");
+
+                entity.HasIndex(e => e.JobId)
+                      .HasDatabaseName("ix_invalid_invoices_job_id");
             });
         }
     }

@@ -15,7 +15,7 @@ namespace invoice_v1.src.Services
     {
         private readonly ILogger<DriveMonitoringService> _logger;
         private readonly IServiceProvider _serviceProvider;
-        private readonly TimeSpan _interval = TimeSpan.FromSeconds(30);
+        private readonly TimeSpan _interval = TimeSpan.FromSeconds(59);
 
         // Thread-safe dictionary to track state in memory
         private readonly ConcurrentDictionary<string, DateTime> _lastSeenFiles = new();
@@ -150,7 +150,8 @@ namespace invoice_v1.src.Services
             // Map Email -> { Name, Id }
             var userMap = allUsers.ToDictionary(
                 u => u.Email!.ToLower(),
-                u => new {
+                u => new
+                {
                     Name = (string?)u.GetType().GetProperty("Name")?.GetValue(u, null) ??
                            (string?)u.GetType().GetProperty("FullName")?.GetValue(u, null) ??
                            (string?)u.GetType().GetProperty("Username")?.GetValue(u, null) ??

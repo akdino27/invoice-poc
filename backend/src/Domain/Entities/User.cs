@@ -7,7 +7,7 @@ namespace invoice_v1.src.Domain.Entities
     {
         public Guid Id { get; set; }
         public string Email { get; set; } = string.Empty;
-        public string Username { get; set; } = string.Empty; 
+        public string Username { get; set; } = string.Empty;
         public string PasswordHash { get; set; } = string.Empty;
         public string PasswordSalt { get; set; } = string.Empty;
 

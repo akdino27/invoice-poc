@@ -8,7 +8,7 @@ namespace invoice_v1.src.Api.Controllers
 {
     [Authorize]
     [ApiController]
-    [Route("api/analytics")]  // FIXED: Lowercase route
+    [Route("api/analytics")]
     public class AnalyticsController : BaseAuthenticatedController
     {
         private readonly IAnalyticsService _analyticsService;

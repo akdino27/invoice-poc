@@ -14,5 +14,7 @@ namespace invoice_v1.src.Services
             string mimeType,
             Stream stream,
             string email);
+
+        Task DeleteFileAsync(string fileId);
     }
 }

@@ -1,0 +1,9 @@
+# Ruff configuration for worker
+line-length = 120
+
+[lint]
+select = ["E", "W", "F"]
+
+[lint.per-file-ignores]
+# Allow long lines in config (Pydantic field descriptions)
+"app/config.py" = ["E501"]

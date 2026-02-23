@@ -249,5 +249,15 @@ namespace invoice_v1.src.Services
                 throw;
             }
         }
+
+        public async Task DeleteFileAsync(string fileId)
+        {
+            if (_serviceAccountDrive == null)
+                throw new InvalidOperationException("Drive service not initialized");
+
+            await _serviceAccountDrive.Files.Delete(fileId).ExecuteAsync();
+
+            _logger.LogInformation("Deleted file {FileId} from Drive", fileId);
+        }
     }
 }

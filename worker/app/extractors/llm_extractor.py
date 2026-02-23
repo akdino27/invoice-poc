@@ -1,19 +1,18 @@
 import json
 import logging
 from groq import Groq
-from typing import Dict
 from app.models.invoice import InvoiceData
 
 logger = logging.getLogger(__name__)
 
 class LLMExtractor:
     """Groq Llama-3 based invoice data extractor."""
-    
+
     def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
         self.client = Groq(api_key=api_key)
         self.model = model
         logger.info(f"Initialized LLM extractor with model: {model}")
-        
+
         self.system_prompt = """You are an expert invoice data extraction system.
 
 Extract structured invoice data from the provided text and return ONLY valid JSON.
@@ -73,7 +72,7 @@ Rules:
 8. LineItems array must have at least one item
 9. Each LineItem must have ProductName, ProductId, Quantity, UnitRate, and Amount
 10. Currency defaults to "USD" if not specified"""
-    
+
     def extract_invoice(self, raw_text: str) -> InvoiceData:
         """
         Extract structured invoice data from raw text using Groq Llama.
@@ -88,12 +87,12 @@ Rules:
 
 {raw_text}
 
-Return only valid JSON matching the required structure. 
+Return only valid JSON matching the required structure.
 IMPORTANT: VendorName is the SELLER/COMPANY issuing the invoice (like "SuperStore", "Amazon", etc.)"""
-        
+
         try:
             logger.info(f"Calling Groq Llama API with {len(raw_text)} characters")
-            
+
             # Call Groq API
             chat_completion = self.client.chat.completions.create(
                 messages=[
@@ -105,21 +104,21 @@ IMPORTANT: VendorName is the SELLER/COMPANY issuing the invoice (like "SuperStor
                 max_tokens=4096,
                 response_format={"type": "json_object"}  # Force JSON response
             )
-            
+
             # Extract response
             response_text = chat_completion.choices[0].message.content
             logger.debug(f"Llama response: {len(response_text)} characters")
-            
+
             # Parse JSON
             invoice_dict = json.loads(response_text)
-            
+
             # Validate with Pydantic
             invoice_data = InvoiceData(**invoice_dict)
-            
+
             logger.info(f"Successfully extracted invoice {invoice_data.InvoiceNumber}")
-            
+
             return invoice_data
-            
+
         except json.JSONDecodeError as e:
             logger.error(f"Llama returned invalid JSON: {e}")
             raise Exception(f"LLM returned invalid JSON: {str(e)}")

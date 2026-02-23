@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using System.Text.Json;
+using invoice_v1.src.Application.Exceptions;
 
 namespace invoice_v1.src.Api.Middleware
 {
@@ -21,6 +22,11 @@ namespace invoice_v1.src.Api.Middleware
             try
             {
                 await _next(context);
+            }
+            catch (RateLimitExceededException ex)
+            {
+                _logger.LogWarning(ex, "Rate limit exceeded");
+                await HandleExceptionAsync(context, ex, HttpStatusCode.TooManyRequests, ex.Message);
             }
             catch (UnauthorizedAccessException ex)
             {
