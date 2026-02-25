@@ -2,7 +2,7 @@ name: Backend Worker CI
 
 on:
   push:
-    branches: [AuthUpload]
+    branches: [feature/AuthUpload]
 
 jobs:
   build:
