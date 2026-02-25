@@ -4,12 +4,21 @@ on:
   push:
     branches: [feature/AuthUpload]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     runs-on: ubuntu-latest 
     steps:
+    - name: Login to GHCR
+      run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u icantype1912 --password-stdin
     - uses: actions/checkout@v4
     - name: Build backend Image
       run: docker build ./backend
     - name: Build worker image
       run: docker build ./worker
+
+
+  
