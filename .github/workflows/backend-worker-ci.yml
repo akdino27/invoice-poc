@@ -7,10 +7,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest 
-
-steps:
-  - uses: actions/checkout@v4
-  - name: Build backend Image
-    run: docker build ./backend
-  - name: Build worker image
-    run: docker build ./worker
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build backend Image
+      run: docker build ./backend
+    - name: Build worker image
+      run: docker build ./worker
