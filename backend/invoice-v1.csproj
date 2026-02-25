@@ -9,6 +9,13 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+	  <Compile Remove="secrets\**" />
+	  <Content Remove="secrets\**" />
+	  <EmbeddedResource Remove="secrets\**" />
+	  <None Remove="secrets\**" />
+	</ItemGroup>
+
+	<ItemGroup>
 	  <None Include="tests\invoice-v1.Tests.csproj" />
 	</ItemGroup>
 

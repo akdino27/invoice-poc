@@ -2,7 +2,11 @@ import pytesseract
 from PIL import Image
 import io
 import logging
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+import os
+pytesseract.pytesseract.tesseract_cmd = os.getenv(
+    "TESSERACT_CMD",
+    "/usr/bin/tesseract"
+)
 logger = logging.getLogger(__name__)
 
 
